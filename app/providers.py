@@ -6,6 +6,7 @@ import math
 import struct
 import wave
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -176,11 +177,261 @@ def mock_analysis(request: AnalysisRequest) -> AnalysisResponse:
     )
 
 
+NVIDIA_SYSTEM_PROMPT = """Classify supplied interrogation turns. Return JSON only:
+{"decisions":[{"turn_id":"copied ID","category":"one allowed value"}]}
+
+Allowed category values:
+- benefit_for_confession: an officer connects confessing with release, leniency,
+  going home, or another promised benefit.
+- threat_for_confession: an officer connects confessing or refusing to confess with
+  threatened harm, punishment, or another adverse consequence.
+- insufficient_context: the text is too incomplete to classify.
+
+Examples:
+- "If you confess, I can make sure you go home tonight." => benefit_for_confession
+- "Confess, or I will make this much worse for you." => threat_for_confession
+- "Where were you yesterday afternoon?" => no decision; return {"decisions":[]}
+
+Return decisions only for listed concerns or genuinely insufficient context. If there
+are no listed concerns, return {"decisions":[]}. Copy every included turn_id exactly.
+Do not return Markdown, explanations, evidence, commentary, or reasoning."""
+
+
+def _nvidia_chat_url(base_url: str) -> str:
+    """Accept either NVIDIA's /v1 base URL or its full chat endpoint."""
+    parsed = urlsplit(base_url.strip())
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/chat/completions"):
+        if path.endswith("/v1"):
+            path = f"{path}/chat/completions"
+        else:
+            path = f"{path}/v1/chat/completions"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
+def _nvidia_payload(
+    request: AnalysisRequest, model: str
+) -> dict[str, object]:
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": NVIDIA_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "Analyze this session and return the required JSON object:\n"
+                    f"{request.model_dump_json()}"
+                ),
+            },
+        ],
+        "temperature": 0,
+        "top_p": 1,
+        "max_tokens": 400,
+        "stream": False,
+        # The hosted model enables long-form reasoning by default. It is not
+        # needed for this narrow JSON classifier and can exceed demo latency.
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
+def _extract_json_object(text: str) -> dict[str, object]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline >= 0:
+            cleaned = cleaned[first_newline + 1 :]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].rstrip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("Nemotron response did not contain a JSON object")
+    value = json.loads(cleaned[start : end + 1])
+    if not isinstance(value, dict):
+        raise ValueError("Nemotron response JSON must be an object")
+    return value
+
+
+def _parse_nvidia_response(
+    payload: dict[str, object], request: AnalysisRequest
+) -> AnalysisResponse:
+    try:
+        choices = payload["choices"]
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("NVIDIA response did not include a choice")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise ValueError("NVIDIA response choice was invalid")
+        message = choice["message"]
+        if not isinstance(message, dict):
+            raise ValueError("NVIDIA response message was invalid")
+        content = message["content"]
+        if not isinstance(content, str):
+            raise ValueError("NVIDIA response content was not text")
+        result = _extract_json_object(content)
+        decisions = result.get("decisions")
+        if not isinstance(decisions, list):
+            raise ValueError("Nemotron response did not include decisions")
+
+        turns = {turn.turn_id: turn for turn in request.turns}
+        seen_turn_ids: set[str] = set()
+        concerns: list[Concern] = []
+        insufficient_count = 0
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                raise ValueError("Nemotron decision was invalid")
+            turn_id = decision.get("turn_id")
+            category = decision.get("category")
+            if not isinstance(turn_id, str) or turn_id not in turns:
+                raise ValueError("Nemotron decision referenced an unknown turn")
+            if turn_id in seen_turn_ids:
+                raise ValueError("Nemotron returned duplicate turn decisions")
+            seen_turn_ids.add(turn_id)
+            if category not in {
+                "benefit_for_confession",
+                "threat_for_confession",
+                "none",
+                "insufficient_context",
+            }:
+                raise ValueError("Nemotron returned an unknown category")
+            if category == "insufficient_context":
+                insufficient_count += 1
+                continue
+            if category == "none":
+                continue
+
+            turn = turns[turn_id]
+            if turn.speaker != Speaker.officer:
+                raise ValueError("Nemotron flagged a non-officer turn")
+            if category == "benefit_for_confession":
+                explanation = (
+                    "The officer statement appears to connect a confession "
+                    "with a promised benefit."
+                )
+                alert_text = (
+                    "Potential inducement detected. Review the promise "
+                    "connected to a confession."
+                )
+            else:
+                explanation = (
+                    "The officer statement appears to connect a confession "
+                    "with a threatened consequence."
+                )
+                alert_text = (
+                    "Potential threat linked to a confession detected. "
+                    "Review the highlighted statement."
+                )
+            concerns.append(
+                Concern(
+                    concern_id=_mock_concern_id(
+                        request.session_id, turn.turn_id, category
+                    ),
+                    category=category,
+                    explanation=explanation,
+                    alert_text=alert_text,
+                    evidence=[
+                        Evidence(
+                            quote=turn.text,
+                            turn_id=turn.turn_id,
+                            speaker=turn.speaker,
+                            timestamp_ms=turn.timestamp_ms,
+                        )
+                    ],
+                )
+            )
+
+        status = (
+            AnalysisStatus.insufficient_context
+            if insufficient_count > 0 and not concerns
+            else AnalysisStatus.ok
+        )
+        return AnalysisResponse(
+            session_id=request.session_id,
+            status=status,
+            concerns=concerns,
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ProviderError(
+            "ANALYSIS_INVALID",
+            "Nemotron returned an invalid structured response.",
+            retryable=True,
+        ) from exc
+
+
+async def _analyze_with_nvidia(
+    *, settings: Settings, request: AnalysisRequest
+) -> AnalysisResponse:
+    if not (
+        settings.nemotron_api_url
+        and settings.nemotron_api_key
+        and settings.nemotron_model
+    ):
+        raise ProviderError(
+            "ANALYSIS_CONFIG_MISSING",
+            "NVIDIA Nemotron URL, API key, and model are required.",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                _nvidia_chat_url(settings.nemotron_api_url),
+                headers={
+                    "Authorization": f"Bearer {settings.nemotron_api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=_nvidia_payload(request, settings.nemotron_model),
+            )
+    except httpx.TimeoutException as exc:
+        raise ProviderError(
+            "ANALYSIS_TIMEOUT", "Analysis timed out.", retryable=True
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ProviderError(
+            "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
+        ) from exc
+
+    if response.status_code == 429:
+        raise ProviderError(
+            "ANALYSIS_RATE_LIMITED", "Analysis capacity is busy.", retryable=True
+        )
+    if response.status_code in {401, 403}:
+        raise ProviderError(
+            "ANALYSIS_AUTH_FAILED", "NVIDIA credentials were rejected."
+        )
+    if response.status_code >= 500:
+        raise ProviderError(
+            "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
+        )
+    if response.status_code >= 400:
+        raise ProviderError(
+            "ANALYSIS_REJECTED", "NVIDIA rejected the analysis request."
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise ProviderError(
+            "ANALYSIS_INVALID",
+            "NVIDIA returned a non-JSON response.",
+            retryable=True,
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProviderError(
+            "ANALYSIS_INVALID",
+            "NVIDIA returned an invalid response.",
+            retryable=True,
+        )
+    return _parse_nvidia_response(payload, request)
+
+
 async def analyze_turns(
     *, settings: Settings, request: AnalysisRequest
 ) -> AnalysisResponse:
     if settings.analysis_provider_mode == "mock":
         return mock_analysis(request)
+
+    if settings.analysis_provider_mode == "nvidia":
+        return await _analyze_with_nvidia(settings=settings, request=request)
 
     if not settings.nemotron_api_url:
         raise ProviderError(
@@ -297,4 +548,3 @@ async def synthesize_speech(
     if response.status_code >= 400:
         raise ProviderError("TTS_REJECTED", "The warning could not be spoken.")
     return AudioResult(response.content, "audio/mpeg")
-

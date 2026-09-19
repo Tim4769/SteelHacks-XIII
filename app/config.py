@@ -21,6 +21,7 @@ class Settings:
     elevenlabs_tts_model: str
     nemotron_api_url: str | None
     nemotron_api_key: str | None
+    nemotron_model: str | None
     audio_max_seconds: int
     audio_max_bytes: int
     mock_stt_text: str
@@ -31,8 +32,10 @@ class Settings:
         analysis_mode = os.getenv("ANALYSIS_PROVIDER_MODE", "mock").strip().lower()
         if audio_mode not in {"mock", "elevenlabs"}:
             raise ValueError("AUDIO_PROVIDER_MODE must be mock or elevenlabs")
-        if analysis_mode not in {"mock", "remote"}:
-            raise ValueError("ANALYSIS_PROVIDER_MODE must be mock or remote")
+        if analysis_mode not in {"mock", "remote", "nvidia"}:
+            raise ValueError(
+                "ANALYSIS_PROVIDER_MODE must be mock, remote, or nvidia"
+            )
 
         return cls(
             audio_provider_mode=audio_mode,
@@ -43,6 +46,7 @@ class Settings:
             elevenlabs_tts_model=os.getenv("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5"),
             nemotron_api_url=os.getenv("NEMOTRON_API_URL") or None,
             nemotron_api_key=os.getenv("NEMOTRON_API_KEY") or None,
+            nemotron_model=os.getenv("NEMOTRON_MODEL") or None,
             audio_max_seconds=_positive_int("AUDIO_MAX_SECONDS", 30),
             audio_max_bytes=_positive_int("AUDIO_MAX_BYTES", 30_000_000),
             mock_stt_text=os.getenv(
@@ -59,10 +63,18 @@ class Settings:
                 and self.elevenlabs_voice_id
             ),
             "nemotron_ready": bool(
-                self.analysis_provider_mode == "remote" and self.nemotron_api_url
+                (
+                    self.analysis_provider_mode == "remote"
+                    and self.nemotron_api_url
+                )
+                or (
+                    self.analysis_provider_mode == "nvidia"
+                    and self.nemotron_api_url
+                    and self.nemotron_api_key
+                    and self.nemotron_model
+                )
             ),
         }
 
 
 settings = Settings.from_environment()
-

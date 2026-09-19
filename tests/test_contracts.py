@@ -10,7 +10,13 @@ from app.contracts import (
     Speaker,
     validate_analysis_evidence,
 )
-from app.providers import mock_analysis
+from app.providers import (
+    ProviderError,
+    _nvidia_chat_url,
+    _nvidia_payload,
+    _parse_nvidia_response,
+    mock_analysis,
+)
 
 
 class ContractTests(unittest.TestCase):
@@ -81,7 +87,89 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "session_id"):
             validate_analysis_evidence(self.request, response)
 
+    def test_nvidia_base_url_becomes_chat_completions_url(self):
+        self.assertEqual(
+            _nvidia_chat_url("https://integrate.api.nvidia.com/v1"),
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+        )
+
+    def test_nvidia_payload_uses_selected_model_and_session(self):
+        payload = _nvidia_payload(
+            self.request, "nvidia/nemotron-3.5-lightning-30b-a3b"
+        )
+        self.assertEqual(
+            payload["model"], "nvidia/nemotron-3.5-lightning-30b-a3b"
+        )
+        self.assertIn("demo-001", payload["messages"][1]["content"])
+        self.assertEqual(
+            payload["chat_template_kwargs"], {"enable_thinking": False}
+        )
+
+    def test_valid_nvidia_chat_response_is_parsed(self):
+        response = _parse_nvidia_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """```json
+{
+  "decisions": [
+    {"turn_id": "t1", "category": "none"}
+  ]
+}
+```"""
+                        }
+                    }
+                ]
+            },
+            self.request,
+        )
+        self.assertEqual(response.session_id, "demo-001")
+        self.assertEqual(response.concerns, [])
+
+    def test_empty_nvidia_decisions_are_valid_negative(self):
+        response = _parse_nvidia_response(
+            {
+                "choices": [
+                    {"message": {"content": '{"decisions":[]}'}}
+                ]
+            },
+            self.request,
+        )
+        self.assertEqual(response.status, AnalysisStatus.ok)
+        self.assertEqual(response.concerns, [])
+
+    def test_malformed_nvidia_chat_response_is_rejected(self):
+        with self.assertRaises(ProviderError) as raised:
+            _parse_nvidia_response(
+                {"choices": [{"message": {"content": "not json"}}]},
+                self.request,
+            )
+        self.assertEqual(raised.exception.code, "ANALYSIS_INVALID")
+
+    def test_nvidia_benefit_decision_builds_exact_evidence(self):
+        response = _parse_nvidia_response(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"decisions":[{"turn_id":"t1",'
+                                '"category":"benefit_for_confession"}]}'
+                            )
+                        }
+                    }
+                ]
+            },
+            self.request,
+        )
+        validate_analysis_evidence(self.request, response)
+        self.assertEqual(len(response.concerns), 1)
+        self.assertEqual(
+            response.concerns[0].evidence[0].quote,
+            self.request.turns[0].text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

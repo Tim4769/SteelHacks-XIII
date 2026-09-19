@@ -57,6 +57,23 @@ the backend voice ID.
 
 ## Connect the Nemotron representative's service
 
+### Direct NVIDIA API
+
+For the hosted NVIDIA Nemotron API, add these values to `.env`:
+
+```dotenv
+ANALYSIS_PROVIDER_MODE=nvidia
+NEMOTRON_API_URL=https://integrate.api.nvidia.com/v1
+NEMOTRON_API_KEY=your_private_nvidia_key
+NEMOTRON_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
+```
+
+The backend converts the session/turn contract into a chat-completions request,
+requires structured concern JSON, and then applies the same exact-evidence and
+session validation used for a team-hosted service.
+
+### Team-hosted contract adapter
+
 The remote service must implement the request and response in
 [`docs/integration-contract.md`](docs/integration-contract.md). Add these values
 to `.env`:
