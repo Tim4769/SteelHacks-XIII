@@ -1,108 +1,94 @@
-# Voice Action Agent
+# SteelHacks XIII - interrogation-risk voice prototype
 
-A SteelHacks project that turns spoken requests into decisions, system actions, and natural spoken responses.
+This repository contains a 24-hour hackathon MVP that connects browser audio,
+ElevenLabs speech-to-text and text-to-speech, an interrogation-risk analysis
+contract, and a reference interface.
 
-**Status:** Concept and build planning. The application use case and implementation stack are still being finalized. This workspace currently contains planning material; a runnable application has not yet been added.
+The prototype does **not** make legal conclusions. Its outputs require human
+review.
 
-## Overview
+## What works now
 
-The user speaks naturally. Speech-to-text converts their words into a transcript, NVIDIA Nemotron interprets the situation and selects an action, and the application executes that action. ElevenLabs then turns the response into speech.
+- One-speaker, one-turn browser recording with manual officer/suspect role.
+- Runtime MIME selection with `MediaRecorder.isTypeSupported()`.
+- Backend-only ElevenLabs Scribe v2 and Flash v2.5 adapters.
+- Session-based Nemotron request and structured concern response contracts.
+- Exact-evidence, session, speaker, and concern-ID validation.
+- Mock STT, mock risk analysis, and mock audio chime for a no-key demo.
+- Warning audio only for new `concern_id` values.
+- Distinct no-concern, insufficient-context, analysis-failure, and TTS-failure states.
+- Reset protection, late-response ignoring, idempotent turn retries, and text fallback.
 
-Nemotron acts as the decision and routing layer. Its structured output tells the application which supported action to take, allowing the system to do useful work through a voice interface.
+## Quick start in mock mode
 
-## How it works
-
-```text
-User speaks
-    ↓
-Speech-to-text produces a transcript
-    ↓
-Nemotron interprets intent and selects an action
-    ↓
-The application validates and executes the selected action
-    ↓
-The action result determines the response
-    ↓
-ElevenLabs generates speech
-    ↓
-The user hears the result
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
+uvicorn app.main:app --reload --env-file .env
 ```
 
-The application will support a small, predefined set of actions. It should ask for clarification when a request is unclear and report an action's actual outcome before claiming it succeeded.
+Open <http://127.0.0.1:8000>. Localhost is a secure browser context for
+microphone access.
 
-## Example interaction
+Mock recording returns the configured `MOCK_STT_TEXT`. The typed fallback is
+the fastest way to test negative and alternate examples.
 
-The following is an illustrative scenario; it does not commit the project to an emergency-response application.
+Run tests:
 
-**User:** “I think someone just fell over in the hallway.”
-
-Nemotron could return a compact routing result:
-
-```json
-{
-  "intent": "possible_emergency",
-  "action": "create_alert",
-  "arguments": {
-    "location": "hallway",
-    "summary": "The user reports that someone may have fallen."
-  }
-}
+```bash
+pytest -q
 ```
 
-For this example, the application could create an on-screen alert. After successful execution, ElevenLabs could speak:
+## Enable ElevenLabs
 
-> “I've added an alert to the dashboard about a possible fall in the hallway.”
+Copy `.env.example` to `.env` and set:
 
-This example describes a proposed dashboard action. Contacting another person or an emergency service would require a separate integration.
+```dotenv
+AUDIO_PROVIDER_MODE=elevenlabs
+ELEVENLABS_API_KEY=your_key_here
+ELEVENLABS_VOICE_ID=your_voice_id_here
+```
 
-## Planned components
+Then start with `uvicorn app.main:app --reload --env-file .env`. The browser
+never receives either value. `voice=default` is an application alias mapped to
+the backend voice ID.
 
-| Component | Responsibility |
-|---|---|
-| Voice input | Capture the user's speech |
-| Speech-to-text | Produce the transcript; ElevenLabs Scribe is a candidate |
-| NVIDIA Nemotron | Interpret intent, classify the situation, and select a supported action |
-| Action handler | Validate the structured result, run the action, and return its outcome |
-| ElevenLabs text-to-speech | Speak a response based on the outcome |
-| Interface | Show the transcript, selected action, progress, and result |
+## Connect the Nemotron representative's service
 
-## Hackathon scope
+The remote service must implement the request and response in
+[`docs/integration-contract.md`](docs/integration-contract.md). Add these values
+to `.env`:
 
-Our first version will focus on one application and one or two useful actions. The initial goal is a complete interaction that works reliably from voice input through action execution to spoken output.
+```dotenv
+ANALYSIS_PROVIDER_MODE=remote
+NEMOTRON_API_URL=https://their-service.example/api/analyze
+NEMOTRON_API_KEY=optional_key_if_required
+```
 
-- Choose the specific user and problem the agent will help with.
-- Build the transcript-to-action flow before connecting microphone input.
-- Add spoken responses and a simple interface.
-- Test successful actions, unclear requests, and failed actions.
-- Keep a working demo and a backup recording ready for presentation.
+The backend rejects non-verbatim evidence, unknown turn references, mismatched
+speakers, duplicate concern IDs, or a mismatched session ID.
 
-Continuous listening is a stretch goal. A record-then-process interaction is an acceptable first version.
+## Inputs still needed from the team
 
-**Latency target:** Aim to begin responding within roughly 1–3 seconds after the user finishes speaking for simple actions. This is a design goal, not a measured result; actual timing will depend on transcription, model inference, action execution, speech generation, and network conditions.
+1. **ElevenLabs owner/account:** development API key and approved voice ID.
+2. **Nemotron representative:** reachable endpoint, authentication method,
+   final category taxonomy, and confirmation of the exact response schema.
+3. **Interface representative:** confirmation that the reference state machine,
+   manual role selector, and reset semantics will be carried into the final UI.
+4. **Product/legal reviewer:** approved warning copy, human-review language, and
+   rules for storing or deleting recordings and transcripts.
 
-## Sponsor tracks
+## Demo script
 
-**NVIDIA Nemotron — Beyond the Chatbot:** Nemotron makes structured decisions and routes requests to actions, giving its output a direct role in application behavior.
-
-**ElevenLabs — Out Loud:** Speech is central to both input and output, allowing users to interact naturally without typing or reading a long response.
-
-## Team responsibilities
-
-| Person | Owns |
-|---|---|
-| 1 — Audio | Speech input, transcription, and ElevenLabs spoken output |
-| 2 — Reasoning | Nemotron instructions, structured results, and conversation context |
-| 3 — Interface and integration | App interface, action handler, and connecting the components |
-| 4 — Product and testing | Use-case definition, test scenarios, demo, and submission |
-
-We will connect the components regularly throughout development. Our submission target is **10 a.m. on September 20, 2026**, ahead of the **11 a.m. deadline**, in Pittsburgh time.
-
-## Development setup
-
-Installation and run instructions will be added when the implementation stack is selected and the first runnable version is available. Keep service API keys in local environment variables and out of the repository.
-
-Starting documentation:
-
-- [NVIDIA Nemotron API](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3-nano-30b-a3b)
-- [ElevenLabs speech-to-text](https://elevenlabs.io/docs/overview/capabilities/speech-to-text)
-- [ElevenLabs text-to-speech quickstart](https://elevenlabs.io/docs/eleven-api/quickstart)
+1. Start in mock mode and select **Officer**.
+2. Record one short turn. The mock transcript is:
+   `If you confess, I can make sure you go home tonight.`
+3. Confirm the exact quote, category, explanation, and one spoken/chime alert.
+4. Submit the same session again and confirm the concern does not replay.
+5. Reset the session and confirm old results do not reappear.
+6. Use typed fallback with `Where were you yesterday afternoon?` and confirm
+   **No concern detected** with no audio.
+7. Force an analysis endpoint failure in remote mode and confirm the interface
+   shows **Analysis unavailable**, not a negative result.

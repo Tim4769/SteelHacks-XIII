@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interrogation Risk Voice Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">STEELHACKS XIII / AUDIO MVP</p>
+          <h1>Interrogation Risk Voice Demo</h1>
+          <p class="lede">
+            Record one speaker at a time. The prototype transcribes the turn,
+            asks the analysis service for exact evidence, and speaks only new alerts.
+          </p>
+        </div>
+        <button id="resetButton" class="secondary">Reset session</button>
+      </header>
+
+      <section class="status-strip" aria-live="polite">
+        <span id="statusDot" class="status-dot"></span>
+        <strong id="stateLabel">Loading</strong>
+        <span id="providerLabel">Checking providers...</span>
+      </section>
+
+      <div id="securityWarning" class="notice hidden" role="alert"></div>
+      <div class="disclaimer">
+        Hackathon prototype only. Results require human review and are not legal conclusions.
+      </div>
+
+      <section class="grid">
+        <article class="panel control-panel">
+          <h2>1. Capture a turn</h2>
+          <label for="speakerSelect">Speaker role</label>
+          <select id="speakerSelect">
+            <option value="officer">Officer</option>
+            <option value="suspect">Suspect</option>
+            <option value="unknown">Unknown</option>
+          </select>
+
+          <div class="recording-card">
+            <div>
+              <span id="recordingIndicator" class="recording-indicator"></span>
+              <span id="recordingText">Ready to record</span>
+            </div>
+            <strong id="timer">00:00</strong>
+          </div>
+
+          <div class="button-row">
+            <button id="recordButton" class="primary">Start recording</button>
+            <button id="stopButton" class="danger" disabled>Stop</button>
+            <button id="cancelButton" class="secondary" disabled>Cancel</button>
+          </div>
+
+          <details>
+            <summary>Typed transcript fallback</summary>
+            <label for="textFallback">Use this if microphone or STT is unavailable</label>
+            <textarea
+              id="textFallback"
+              rows="4"
+              placeholder="Type one complete speaker turn..."
+            ></textarea>
+            <button id="analyzeTextButton" class="secondary">Analyze typed turn</button>
+          </details>
+        </article>
+
+        <article class="panel">
+          <h2>2. Session transcript</h2>
+          <p class="session-id">Session: <code id="sessionId"></code></p>
+          <ol id="turnList" class="turn-list">
+            <li class="empty-state">No turns recorded yet.</li>
+          </ol>
+        </article>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>3. Analysis result</h2>
+            <p id="analysisSummary">Waiting for a finalized transcript.</p>
+          </div>
+          <button id="stopAudioButton" class="secondary" disabled>Stop speaking</button>
+        </div>
+        <div id="errorPanel" class="error-panel hidden" role="alert"></div>
+        <div id="concernList" class="concern-list"></div>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
+
