@@ -1,6 +1,5 @@
 from auditor.demo_data import live_demo_script
 from auditor.state import (
-    format_clock,
     format_timestamp,
     high_risk_count,
     ingest_audio,
@@ -14,11 +13,47 @@ from auditor.state import (
 from auditor.theme import boot_page
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 boot_page("Live Interrogation Monitor")
 init_state()
 
 session = st.session_state.live_session
+
+
+def render_session_duration(seconds: float, running: bool) -> None:
+    initial = max(0.0, float(seconds))
+    running_js = "true" if running else "false"
+    components.html(
+        f"""
+        <div style="font-family: Source Sans Pro, sans-serif; padding: 4px 0 8px 0;">
+          <div style="color: rgba(250,250,250,0.6); font-size: 14px;">Active Session Duration</div>
+          <div id="session-duration" style="color: rgb(250,250,250); font-size: 1.75rem; font-weight: 600; line-height: 1.3;">00:00:00</div>
+        </div>
+        <script>
+          const initial = {initial};
+          const running = {running_js};
+          const started = Date.now();
+          function pad(n) {{ return String(n).padStart(2, "0"); }}
+          function fmt(sec) {{
+            sec = Math.max(0, Math.floor(sec));
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            return pad(h) + ":" + pad(m) + ":" + pad(s);
+          }}
+          function current() {{
+            return running ? initial + (Date.now() - started) / 1000 : initial;
+          }}
+          const el = document.getElementById("session-duration");
+          el.textContent = fmt(current());
+          if (running) {{
+            setInterval(() => {{ el.textContent = fmt(current()); }}, 250);
+          }}
+        </script>
+        """,
+        height=72,
+    )
 
 st.title("Live Interrogation Monitor")
 st.caption("Real-time custodial oversight and coercive technique detection.")
@@ -40,7 +75,7 @@ with st.sidebar:
     if st.button(
         "Play next demo turn",
         disabled=not session["is_streaming"],
-            width="stretch",
+        width="stretch",
     ):
         script = live_demo_script()
         if st.session_state.demo_cursor >= len(script):
@@ -78,8 +113,13 @@ with st.sidebar:
 
 
 m1, m2 = st.columns(2)
-m1.metric("Active Session Duration", format_clock(session_duration_seconds(session)))
-m2.metric("High-Risk Alerts Triggered", high_risk_count(session))
+with m1:
+    render_session_duration(
+        session_duration_seconds(session),
+        bool(session.get("is_streaming")),
+    )
+with m2:
+    st.metric("High-Risk Alerts Triggered", high_risk_count(session))
 
 left, right = st.columns([0.6, 0.4], gap="large")
 

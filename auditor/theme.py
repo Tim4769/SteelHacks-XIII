@@ -68,3 +68,4 @@ CSS = """
 def boot_page(title: str, layout: str = "wide") -> None:
     st.set_page_config(page_title=title, page_icon="⚖️", layout=layout)
     st.markdown(CSS, unsafe_allow_html=True)
+

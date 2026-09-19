@@ -35,6 +35,8 @@ def _empty_session(prefix: str) -> dict[str, Any]:
         "session_id": f"{prefix}-{uuid.uuid4().hex[:8]}",
         "label": "Live session (unsaved)",
         "started_at": None,
+        "segment_started_at": None,
+        "elapsed_seconds": 0.0,
         "is_streaming": False,
         "turns": [],
         "active_alert": None,
@@ -49,11 +51,12 @@ def format_clock(seconds: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def session_duration_seconds(session: dict[str, Any]) -> int:
-    started = session.get("started_at")
-    if not started:
-        return 0
-    return int(time.time() - started)
+def session_duration_seconds(session: dict[str, Any]) -> float:
+    elapsed = float(session.get("elapsed_seconds") or 0)
+    segment_started = session.get("segment_started_at")
+    if session.get("is_streaming") and segment_started:
+        elapsed += time.time() - segment_started
+    return max(0.0, elapsed)
 
 
 def high_risk_count(session: dict[str, Any]) -> int:
@@ -68,10 +71,20 @@ def format_timestamp(timestamp_ms: int | None) -> str:
 
 def start_stream() -> None:
     session = st.session_state.live_session
-    if not session.get("started_at"):
+    if session.get("is_streaming"):
+        return
+    is_fresh = (
+        not session.get("started_at")
+        and not session.get("elapsed_seconds")
+        and not session.get("turns")
+    )
+    if is_fresh:
         reset_live_session()
         session = st.session_state.live_session
-        session["started_at"] = time.time()
+    now = time.time()
+    if not session.get("started_at"):
+        session["started_at"] = now
+    session["segment_started_at"] = now
     session["is_streaming"] = True
 
 
@@ -86,6 +99,12 @@ def reset_live_session() -> None:
 
 def stop_stream(save_to_archive: bool = True) -> None:
     session = st.session_state.live_session
+    segment_started = session.get("segment_started_at")
+    if session.get("is_streaming") and segment_started:
+        session["elapsed_seconds"] = float(session.get("elapsed_seconds") or 0) + (
+            time.time() - segment_started
+        )
+    session["segment_started_at"] = None
     session["is_streaming"] = False
     if save_to_archive and session["turns"]:
         archived = {
