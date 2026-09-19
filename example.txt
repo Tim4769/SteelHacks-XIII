@@ -1,4 +1,0 @@
-Hello, SteelHacks!
-
-This example file tests creating a commit through the GitHub connection.
-Created on 2026-09-19.
