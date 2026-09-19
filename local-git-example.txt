@@ -1,0 +1,4 @@
+Hello, SteelHacks XIII!
+
+This example file was created locally and committed using Git.
+It demonstrates adding a new file from a local checkout to GitHub.
