@@ -9,7 +9,9 @@ review.
 
 ## What works now
 
-- One-speaker, one-turn browser recording with manual officer/suspect role.
+- One-speaker continuous browser capture with manual officer/suspect role.
+- Automatic turn finalization after about 1.3 seconds of silence.
+- Echo cancellation plus capture suppression while spoken alerts play.
 - Runtime MIME selection with `MediaRecorder.isTypeSupported()`.
 - Backend-only ElevenLabs Scribe v2 and Flash v2.5 adapters.
 - Session-based Nemotron request and structured concern response contracts.
@@ -31,6 +33,17 @@ uvicorn app.main:app --reload --env-file .env
 
 Open <http://127.0.0.1:8000>. Localhost is a secure browser context for
 microphone access.
+
+Click **Start live session** once, speak naturally, and pause when a turn is
+complete. The browser automatically closes the segment, transcribes and
+analyzes it, then continues listening. **Finalize turn now** is available for
+noisy rooms. **Stop live session** ends continuous capture.
+
+The VAD thresholds are intentionally defined at the top of
+`app/static/app.js` so the team can tune the silence delay and microphone
+sensitivity during venue testing. While a warning is synthesized and played,
+the current recording segment is discarded and capture resumes after a short
+echo-recovery delay.
 
 Mock recording returns the configured `MOCK_STT_TEXT`. The typed fallback is
 the fastest way to test negative and alternate examples.

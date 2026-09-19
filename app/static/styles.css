@@ -46,7 +46,12 @@ textarea { resize: vertical; }
 .recording-card { display: flex; justify-content: space-between; align-items: center; background: var(--paper); border-radius: 11px; padding: 16px; margin: 18px 0 12px; }
 .recording-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9aa7b5; margin-right: 8px; }
 .recording-indicator.live { background: var(--red); animation: pulse 1.1s infinite; }
+.recording-indicator.listening { background: var(--green); animation: none; }
+.recording-indicator.paused { background: var(--orange); animation: none; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(188,47,54,.13); } }
+.voice-meter { height: 8px; overflow: hidden; background: #e5ebf2; border-radius: 999px; margin: 0 0 8px; }
+.voice-meter span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--green), var(--cyan), var(--red)); transition: width 80ms linear; }
+.capture-hint { margin: 0 0 13px; color: var(--muted); font-size: .84rem; line-height: 1.4; }
 .button-row { display: flex; gap: 9px; flex-wrap: wrap; }
 button { border: 0; border-radius: 9px; padding: 11px 15px; font-weight: 750; }
 .primary { color: white; background: var(--blue); }
@@ -77,4 +82,3 @@ code { overflow-wrap: anywhere; }
   .hero, .panel-heading { flex-direction: column; }
   #providerLabel { margin-left: 0; width: 100%; }
 }
-

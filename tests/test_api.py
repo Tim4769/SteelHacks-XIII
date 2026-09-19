@@ -6,6 +6,14 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_home_exposes_continuous_capture_controls():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Start live session" in response.text
+    assert "Finalize turn now" in response.text
+    assert "voiceMeterFill" in response.text
+
+
 def test_health_reports_mock_modes():
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -69,4 +77,3 @@ def test_mock_analysis_and_synthesis():
     assert speech.status_code == 200
     assert speech.headers["content-type"].startswith("audio/wav")
     assert speech.content.startswith(b"RIFF")
-
