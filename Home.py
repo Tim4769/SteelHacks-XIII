@@ -10,7 +10,7 @@ st.title("Custodial Oversight Auditor")
 st.caption("Real-time interrogation monitoring and searchable compliance archives.")
 
 st.write(
-    "Home. Open live monitoring to stream audio and surface high-risk alerts, "
+    "Open live monitoring to stream audio and surface high-risk alerts, "
     "or open archives to search past sessions. Transcripts live in session "
     "state so they persist while you move between pages."
 )
