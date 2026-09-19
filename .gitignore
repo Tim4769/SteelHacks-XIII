@@ -1,9 +1,15 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .DS_Store
 recordings/
 generated-audio/
-
+build/
+dist/
+*.egg-info/
