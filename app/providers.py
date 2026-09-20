@@ -36,8 +36,7 @@ class ProviderError(RuntimeError):
 
 RIGHTS_REMINDER = (
     "Rights reminder for a United States custodial interrogation: You have the right "
-    "to remain silent. Anything you say may be used against you in court. You have "
-    "the right to speak with an attorney. This prototype is not legal advice."
+    "to remain silent. Anything you say may be used against you in court."
 )
 
 

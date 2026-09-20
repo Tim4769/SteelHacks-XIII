@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-
 client = TestClient(app)
 
 
@@ -67,7 +66,8 @@ def test_mock_analysis_and_synthesis():
     assert analysis.status_code == 200
     concern = analysis.json()["concerns"][0]
     assert "You have the right to remain silent" in concern["alert_text"]
-    assert "right to speak with an attorney" in concern["alert_text"]
+    assert "right to speak with an attorney" not in concern["alert_text"]
+    assert "not legal advice" not in concern["alert_text"]
     speech = client.post(
         "/api/audio/synthesize",
         json={
