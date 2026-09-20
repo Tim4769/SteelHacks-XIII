@@ -66,6 +66,8 @@ class AnalysisResponse(StrictModel):
     session_id: str = Field(min_length=1, max_length=100)
     status: AnalysisStatus
     concerns: list[Concern] = Field(default_factory=list, max_length=50)
+    detection_source: str | None = Field(default=None, max_length=40)
+    technical_warning: str | None = Field(default=None, max_length=1_000)
 
     @model_validator(mode="after")
     def unique_concern_ids(self) -> "AnalysisResponse":
@@ -115,4 +117,3 @@ def validate_analysis_evidence(
                     f"evidence quote is not verbatim in turn {evidence.turn_id}"
                 )
     return response
-

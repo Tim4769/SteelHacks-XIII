@@ -24,6 +24,12 @@ dev = [
   "types-requests>=2.32,<3",
 ]
 
+[tool.setuptools]
+packages = ["app", "steelhacks_reasoning"]
+
+[tool.setuptools.package-data]
+app = ["static/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

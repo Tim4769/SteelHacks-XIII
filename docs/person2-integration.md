@@ -19,12 +19,13 @@ python -m pip install -e .
 The repository-root `.env` is local and ignored by Git. It must define these names:
 
 ```dotenv
-NVIDIA_API_KEY=
-NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_MODEL=
+NEMOTRON_API_KEY=
+NEMOTRON_API_URL=https://integrate.api.nvidia.com/v1
+NEMOTRON_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 ```
 
-Do not place any of these values in Streamlit browser code. The module loads local values at the
+The original `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, and `NVIDIA_MODEL` names remain supported as
+standalone aliases. Do not place any of these values in Streamlit browser code. The module loads local values at the
 model-client boundary and sends the API key only in the server-side NVIDIA authorization header.
 
 The analyzer is local-first. High-confidence configured concerns and obvious no-concern statements

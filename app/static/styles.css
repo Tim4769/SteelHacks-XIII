@@ -68,6 +68,7 @@ summary { cursor: pointer; color: var(--blue); font-weight: 800; }
 .results-panel { margin-top: 18px; }
 .panel-heading { display: flex; justify-content: space-between; gap: 18px; }
 .panel-heading p { margin: -10px 0 12px; color: var(--muted); }
+.analysis-metadata { margin-top: 0 !important; color: #75420a !important; font-size: .84rem; }
 .concern-list { display: grid; gap: 12px; }
 .concern { border: 1px solid #efc98e; border-left: 5px solid var(--orange); background: #fff9ef; border-radius: 10px; padding: 16px; }
 .concern h3 { margin: 0 0 5px; color: #87400e; }

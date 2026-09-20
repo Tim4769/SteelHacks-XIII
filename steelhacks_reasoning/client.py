@@ -45,9 +45,12 @@ class NvidiaSettings:
     def from_environment(cls) -> NvidiaSettings:
         repo_root = Path(__file__).resolve().parents[1]
         load_dotenv(repo_root / ".env", override=False)
-        api_key = os.getenv("NVIDIA_API_KEY", "")
-        base_url = os.getenv("NVIDIA_BASE_URL", "")
-        model = os.getenv("NVIDIA_MODEL", "")
+        # The integrated FastAPI app already uses NEMOTRON_* names. Keep the
+        # original NVIDIA_* names as aliases so the reasoning module also
+        # remains usable on its own.
+        api_key = os.getenv("NEMOTRON_API_KEY") or os.getenv("NVIDIA_API_KEY", "")
+        base_url = os.getenv("NEMOTRON_API_URL") or os.getenv("NVIDIA_BASE_URL", "")
+        model = os.getenv("NEMOTRON_MODEL") or os.getenv("NVIDIA_MODEL", "")
         if not api_key or not base_url or not model:
             raise ConfigurationError("NVIDIA model configuration is incomplete.")
         return cls(api_key=api_key, base_url=base_url, model=model)

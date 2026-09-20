@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import math
@@ -9,6 +10,9 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+from steelhacks_reasoning import analyze_dialogue as analyze_with_team_reasoning
+from steelhacks_reasoning.models import AnalysisStatus as TeamAnalysisStatus
 
 from .config import Settings
 from .contracts import (
@@ -76,26 +80,18 @@ async def transcribe_audio(
                 data=form,
             )
     except httpx.TimeoutException as exc:
-        raise ProviderError(
-            "STT_TIMEOUT", "Transcription timed out.", retryable=True
-        ) from exc
+        raise ProviderError("STT_TIMEOUT", "Transcription timed out.", retryable=True) from exc
     except httpx.HTTPError as exc:
         raise ProviderError(
             "STT_UNAVAILABLE", "Transcription is unavailable.", retryable=True
         ) from exc
 
     if response.status_code == 429:
-        raise ProviderError(
-            "STT_RATE_LIMITED", "Transcription capacity is busy.", retryable=True
-        )
+        raise ProviderError("STT_RATE_LIMITED", "Transcription capacity is busy.", retryable=True)
     if response.status_code in {401, 403}:
-        raise ProviderError(
-            "STT_AUTH_FAILED", "Transcription credentials were rejected."
-        )
+        raise ProviderError("STT_AUTH_FAILED", "Transcription credentials were rejected.")
     if response.status_code >= 500:
-        raise ProviderError(
-            "STT_UNAVAILABLE", "Transcription is unavailable.", retryable=True
-        )
+        raise ProviderError("STT_UNAVAILABLE", "Transcription is unavailable.", retryable=True)
     if response.status_code >= 400:
         raise ProviderError("STT_REJECTED", "The audio could not be transcribed.")
 
@@ -144,18 +140,18 @@ def mock_analysis(request: AnalysisRequest) -> AnalysisResponse:
             elif any(phrase in lowered for phrase in ("or else", "worse", "hurt", "threat")):
                 category = "threat_for_confession"
                 explanation = (
-                    "The officer statement appears to connect a confession with a threatened consequence."
+                    "The officer statement appears to connect a confession "
+                    "with a threatened consequence."
                 )
                 alert_text = (
-                    "Potential threat linked to a confession detected. Review the highlighted statement."
+                    "Potential threat linked to a confession detected. "
+                    "Review the highlighted statement."
                 )
 
         if category:
             concerns.append(
                 Concern(
-                    concern_id=_mock_concern_id(
-                        request.session_id, turn.turn_id, category
-                    ),
+                    concern_id=_mock_concern_id(request.session_id, turn.turn_id, category),
                     category=category,
                     explanation=explanation,
                     alert_text=alert_text,
@@ -209,9 +205,7 @@ def _nvidia_chat_url(base_url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
 
 
-def _nvidia_payload(
-    request: AnalysisRequest, model: str
-) -> dict[str, object]:
+def _nvidia_payload(request: AnalysisRequest, model: str) -> dict[str, object]:
     return {
         "model": model,
         "messages": [
@@ -305,12 +299,10 @@ def _parse_nvidia_response(
                 raise ValueError("Nemotron flagged a non-officer turn")
             if category == "benefit_for_confession":
                 explanation = (
-                    "The officer statement appears to connect a confession "
-                    "with a promised benefit."
+                    "The officer statement appears to connect a confession with a promised benefit."
                 )
                 alert_text = (
-                    "Potential inducement detected. Review the promise "
-                    "connected to a confession."
+                    "Potential inducement detected. Review the promise connected to a confession."
                 )
             else:
                 explanation = (
@@ -323,9 +315,7 @@ def _parse_nvidia_response(
                 )
             concerns.append(
                 Concern(
-                    concern_id=_mock_concern_id(
-                        request.session_id, turn.turn_id, category
-                    ),
+                    concern_id=_mock_concern_id(request.session_id, turn.turn_id, category),
                     category=category,
                     explanation=explanation,
                     alert_text=alert_text,
@@ -358,14 +348,8 @@ def _parse_nvidia_response(
         ) from exc
 
 
-async def _analyze_with_nvidia(
-    *, settings: Settings, request: AnalysisRequest
-) -> AnalysisResponse:
-    if not (
-        settings.nemotron_api_url
-        and settings.nemotron_api_key
-        and settings.nemotron_model
-    ):
+async def _analyze_with_nvidia(*, settings: Settings, request: AnalysisRequest) -> AnalysisResponse:
+    if not (settings.nemotron_api_url and settings.nemotron_api_key and settings.nemotron_model):
         raise ProviderError(
             "ANALYSIS_CONFIG_MISSING",
             "NVIDIA Nemotron URL, API key, and model are required.",
@@ -383,30 +367,20 @@ async def _analyze_with_nvidia(
                 json=_nvidia_payload(request, settings.nemotron_model),
             )
     except httpx.TimeoutException as exc:
-        raise ProviderError(
-            "ANALYSIS_TIMEOUT", "Analysis timed out.", retryable=True
-        ) from exc
+        raise ProviderError("ANALYSIS_TIMEOUT", "Analysis timed out.", retryable=True) from exc
     except httpx.HTTPError as exc:
         raise ProviderError(
             "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
         ) from exc
 
     if response.status_code == 429:
-        raise ProviderError(
-            "ANALYSIS_RATE_LIMITED", "Analysis capacity is busy.", retryable=True
-        )
+        raise ProviderError("ANALYSIS_RATE_LIMITED", "Analysis capacity is busy.", retryable=True)
     if response.status_code in {401, 403}:
-        raise ProviderError(
-            "ANALYSIS_AUTH_FAILED", "NVIDIA credentials were rejected."
-        )
+        raise ProviderError("ANALYSIS_AUTH_FAILED", "NVIDIA credentials were rejected.")
     if response.status_code >= 500:
-        raise ProviderError(
-            "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
-        )
+        raise ProviderError("ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True)
     if response.status_code >= 400:
-        raise ProviderError(
-            "ANALYSIS_REJECTED", "NVIDIA rejected the analysis request."
-        )
+        raise ProviderError("ANALYSIS_REJECTED", "NVIDIA rejected the analysis request.")
     try:
         payload = response.json()
     except json.JSONDecodeError as exc:
@@ -424,14 +398,65 @@ async def _analyze_with_nvidia(
     return _parse_nvidia_response(payload, request)
 
 
-async def analyze_turns(
-    *, settings: Settings, request: AnalysisRequest
-) -> AnalysisResponse:
+async def _analyze_with_team_module(request: AnalysisRequest) -> AnalysisResponse:
+    """Adapt the Person 2 reasoning contract to the existing browser API."""
+    newest = request.turns[-1]
+    payload = {
+        "session_id": request.session_id,
+        "request_id": f"analysis-{len(request.turns)}-{newest.turn_id}",
+        "sequence_number": len(request.turns),
+        "context_turns": [turn.model_dump(mode="json") for turn in request.turns[:-1]],
+        "new_turns": [newest.model_dump(mode="json")],
+    }
+    result = await asyncio.to_thread(analyze_with_team_reasoning, payload)
+    if result.status == TeamAnalysisStatus.ERROR:
+        detail = result.error
+        raise ProviderError(
+            detail.code.value if detail else "ANALYSIS_INVALID",
+            detail.message if detail else "The reasoning module rejected the request.",
+            retryable=detail.retryable if detail else False,
+        )
+
+    concerns = [
+        Concern(
+            concern_id=concern.concern_id,
+            category=concern.category.value,
+            explanation=concern.explanation,
+            alert_text=concern.alert_text,
+            evidence=[
+                Evidence(
+                    quote=evidence.quote,
+                    turn_id=evidence.turn_id,
+                    speaker=Speaker(evidence.speaker.value),
+                    timestamp_ms=(
+                        round(evidence.timestamp_ms) if evidence.timestamp_ms is not None else None
+                    ),
+                )
+                for evidence in concern.evidence
+            ],
+        )
+        for concern in result.concerns
+    ]
+    status = (
+        AnalysisStatus.insufficient_context
+        if result.status == TeamAnalysisStatus.INSUFFICIENT
+        else AnalysisStatus.ok
+    )
+    return AnalysisResponse(
+        session_id=request.session_id,
+        status=status,
+        concerns=concerns,
+        detection_source=result.detection_source.value,
+        technical_warning=result.technical_warning,
+    )
+
+
+async def analyze_turns(*, settings: Settings, request: AnalysisRequest) -> AnalysisResponse:
     if settings.analysis_provider_mode == "mock":
         return mock_analysis(request)
 
     if settings.analysis_provider_mode == "nvidia":
-        return await _analyze_with_nvidia(settings=settings, request=request)
+        return await _analyze_with_team_module(request)
 
     if not settings.nemotron_api_url:
         raise ProviderError(
@@ -450,22 +475,16 @@ async def analyze_turns(
                 content=request.model_dump_json(),
             )
     except httpx.TimeoutException as exc:
-        raise ProviderError(
-            "ANALYSIS_TIMEOUT", "Analysis timed out.", retryable=True
-        ) from exc
+        raise ProviderError("ANALYSIS_TIMEOUT", "Analysis timed out.", retryable=True) from exc
     except httpx.HTTPError as exc:
         raise ProviderError(
             "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
         ) from exc
 
     if response.status_code == 429:
-        raise ProviderError(
-            "ANALYSIS_RATE_LIMITED", "Analysis capacity is busy.", retryable=True
-        )
+        raise ProviderError("ANALYSIS_RATE_LIMITED", "Analysis capacity is busy.", retryable=True)
     if response.status_code >= 500:
-        raise ProviderError(
-            "ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True
-        )
+        raise ProviderError("ANALYSIS_UNAVAILABLE", "Analysis is unavailable.", retryable=True)
     if response.status_code >= 400:
         raise ProviderError("ANALYSIS_REJECTED", "Analysis rejected the request.")
     try:
@@ -497,9 +516,7 @@ def _mock_chime() -> bytes:
     return buffer.getvalue()
 
 
-async def synthesize_speech(
-    *, settings: Settings, text: str, voice_alias: str
-) -> AudioResult:
+async def synthesize_speech(*, settings: Settings, text: str, voice_alias: str) -> AudioResult:
     if settings.audio_provider_mode == "mock":
         return AudioResult(_mock_chime(), "audio/wav")
 
@@ -513,10 +530,7 @@ async def synthesize_speech(
     if voice_alias != "default":
         raise ProviderError("TTS_VOICE_UNKNOWN", "The requested voice is unavailable.")
 
-    url = (
-        "https://api.elevenlabs.io/v1/text-to-speech/"
-        f"{settings.elevenlabs_voice_id}"
-    )
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}"
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
@@ -531,20 +545,14 @@ async def synthesize_speech(
     except httpx.TimeoutException as exc:
         raise ProviderError("TTS_TIMEOUT", "Speech timed out.", retryable=True) from exc
     except httpx.HTTPError as exc:
-        raise ProviderError(
-            "TTS_UNAVAILABLE", "Speech is unavailable.", retryable=True
-        ) from exc
+        raise ProviderError("TTS_UNAVAILABLE", "Speech is unavailable.", retryable=True) from exc
 
     if response.status_code == 429:
-        raise ProviderError(
-            "TTS_RATE_LIMITED", "Speech capacity is busy.", retryable=True
-        )
+        raise ProviderError("TTS_RATE_LIMITED", "Speech capacity is busy.", retryable=True)
     if response.status_code in {401, 403}:
         raise ProviderError("TTS_AUTH_FAILED", "Speech credentials were rejected.")
     if response.status_code >= 500:
-        raise ProviderError(
-            "TTS_UNAVAILABLE", "Speech is unavailable.", retryable=True
-        )
+        raise ProviderError("TTS_UNAVAILABLE", "Speech is unavailable.", retryable=True)
     if response.status_code >= 400:
         raise ProviderError("TTS_REJECTED", "The warning could not be spoken.")
     return AudioResult(response.content, "audio/mpeg")

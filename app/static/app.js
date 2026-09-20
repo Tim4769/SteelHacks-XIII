@@ -44,7 +44,7 @@ const el = Object.fromEntries(
     "speakerSelect", "recordButton", "stopButton", "cancelButton",
     "recordingIndicator", "recordingText", "timer", "voiceMeterFill",
     "textFallback", "analyzeTextButton", "sessionId", "turnList",
-    "analysisSummary", "errorPanel", "concernList", "stopAudioButton",
+    "analysisSummary", "analysisMetadata", "errorPanel", "concernList", "stopAudioButton",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -153,6 +153,8 @@ function resetSession() {
   el.concernList.innerHTML = "";
   el.errorPanel.classList.add("hidden");
   el.analysisSummary.textContent = "Waiting for a finalized transcript.";
+  el.analysisMetadata.textContent = "";
+  el.analysisMetadata.classList.add("hidden");
   renderControls();
 }
 
@@ -436,6 +438,11 @@ async function addTurnAndAnalyze(turn) {
 }
 
 async function renderAnalysis(result, sessionAtStart) {
+  const metadata = [];
+  if (result.detection_source) metadata.push(`Detection source: ${result.detection_source}`);
+  if (result.technical_warning) metadata.push(result.technical_warning);
+  el.analysisMetadata.textContent = metadata.join(" — ");
+  el.analysisMetadata.classList.toggle("hidden", metadata.length === 0);
   if (result.status === "insufficient_context") {
     el.analysisSummary.textContent = "Insufficient context. No audio alert was generated.";
     setUiState("Insufficient context");
