@@ -10,6 +10,7 @@ const VAD = Object.freeze({
 });
 
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+const ARCHIVE_STORAGE_KEY = "steelhacks.interrogationArchives.v1";
 
 function emptyCapture(role, meterId) {
   return {
@@ -31,6 +32,9 @@ const state = {
   sessionId: null,
   sessionStartedAt: null,
   turns: [],
+  concerns: [],
+  alertTimeline: [],
+  analysisMetadata: null,
   seenConcernIds: new Set(),
   captures: {
     suspect: emptyCapture("suspect", "suspectMeterFill"),
@@ -61,6 +65,11 @@ const el = Object.fromEntries(
     "recordingIndicator", "recordingText", "timer", "suspectMeterFill", "officerMeterFill",
     "textFallback", "analyzeTextButton", "sessionId", "turnList",
     "analysisSummary", "analysisMetadata", "errorPanel", "concernList", "stopAudioButton",
+    "navToggle", "sideNav", "navBackdrop", "archiveSearch", "archiveSessionSelect",
+    "downloadJsonButton", "downloadCsvButton", "archiveEmpty", "archiveDisplay",
+    "archiveTitle", "archiveDate", "archiveTurnCount", "archiveConcernCount",
+    "archiveTranscript", "archiveAlerts", "saveSessionDialog", "sessionNameInput",
+    "saveSessionError", "saveSessionButton", "dontSaveSessionButton", "toast",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -168,6 +177,9 @@ function resetSession() {
   state.sessionId = newId("session");
   state.sessionStartedAt = Date.now();
   state.turns = [];
+  state.concerns = [];
+  state.alertTimeline = [];
+  state.analysisMetadata = null;
   state.seenConcernIds.clear();
   state.analysisQueue = Promise.resolve();
   state.queuedTurns = 0;
@@ -588,6 +600,13 @@ async function addTurnAndAnalyze(turn) {
 }
 
 async function renderAnalysis(result, sessionAtStart) {
+  const concernMap = new Map(state.concerns.map((concern) => [concern.concern_id, concern]));
+  result.concerns.forEach((concern) => concernMap.set(concern.concern_id, structuredClone(concern)));
+  state.concerns = [...concernMap.values()];
+  state.analysisMetadata = {
+    detection_source: result.detection_source || null,
+    technical_warning: result.technical_warning || null,
+  };
   const metadata = [];
   if (result.detection_source) metadata.push(`Detection source: ${result.detection_source}`);
   if (result.technical_warning) metadata.push(result.technical_warning);
@@ -628,6 +647,10 @@ async function renderAnalysis(result, sessionAtStart) {
   for (const concern of newConcerns) {
     if (state.sessionId !== sessionAtStart) return;
     state.seenConcernIds.add(concern.concern_id);
+    state.alertTimeline.push({
+      timestamp_ms: Math.max(0, Date.now() - state.sessionStartedAt),
+      concern: structuredClone(concern),
+    });
     await speakConcern(concern, sessionAtStart);
   }
   setUiState("Review required");
@@ -732,8 +755,287 @@ async function loadHealth() {
   }
 }
 
+function navigateToPage(pageName) {
+  document.querySelectorAll(".app-page").forEach((page) => {
+    page.classList.toggle("active", page.dataset.page === pageName);
+  });
+  document.querySelectorAll(".nav-link").forEach((link) => {
+    link.classList.toggle("active", link.dataset.page === pageName);
+  });
+  if (pageName === "archives") renderArchivePage();
+  history.replaceState(null, "", `#${pageName}`);
+  closeSideNav();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function toggleSideNav() {
+  const open = !el.sideNav.classList.contains("open");
+  el.sideNav.classList.toggle("open", open);
+  el.navBackdrop.classList.toggle("hidden", !open);
+  el.navToggle.setAttribute("aria-expanded", String(open));
+  el.navToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+}
+
+function closeSideNav() {
+  el.sideNav.classList.remove("open");
+  el.navBackdrop.classList.add("hidden");
+  el.navToggle.setAttribute("aria-expanded", "false");
+  el.navToggle.setAttribute("aria-label", "Open navigation");
+}
+
+function loadArchives() {
+  try {
+    const value = JSON.parse(localStorage.getItem(ARCHIVE_STORAGE_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function storeArchives(archives) {
+  localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(archives));
+}
+
+function formatElapsed(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor((milliseconds || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function concernTurnIds(session) {
+  return new Set(session.concerns.flatMap((concern) => concern.evidence.map((item) => item.turn_id)));
+}
+
+function concernsForTurn(session, turnId) {
+  return session.concerns.filter((concern) => concern.evidence.some((item) => item.turn_id === turnId));
+}
+
+function selectedArchive() {
+  return loadArchives().find((archive) => archive.archive_id === el.archiveSessionSelect.value) || null;
+}
+
+function appendHighlightedText(container, value, query) {
+  if (!query) {
+    container.textContent = value;
+    return;
+  }
+  const lowerValue = value.toLocaleLowerCase();
+  const lowerQuery = query.toLocaleLowerCase();
+  let start = 0;
+  let index = lowerValue.indexOf(lowerQuery);
+  while (index >= 0) {
+    container.append(document.createTextNode(value.slice(start, index)));
+    const mark = document.createElement("mark");
+    mark.className = "search-highlight";
+    mark.textContent = value.slice(index, index + query.length);
+    container.append(mark);
+    start = index + query.length;
+    index = lowerValue.indexOf(lowerQuery, start);
+  }
+  container.append(document.createTextNode(value.slice(start)));
+}
+
+function renderArchiveTranscript(session, query, concernOnly) {
+  el.archiveTranscript.innerHTML = "";
+  const flaggedTurnIds = concernTurnIds(session);
+  const visibleTurns = session.turns.filter((turn) => {
+    const related = concernsForTurn(session, turn.turn_id);
+    if (concernOnly && !flaggedTurnIds.has(turn.turn_id)) return false;
+    if (!query) return true;
+    const searchText = [turn.text, turn.speaker, ...related.flatMap((concern) => [concern.category, concern.explanation])].join(" ").toLocaleLowerCase();
+    return searchText.includes(query.toLocaleLowerCase());
+  });
+  if (!visibleTurns.length) {
+    el.archiveTranscript.innerHTML = '<li class="empty-state">No transcript lines match the current search and filter.</li>';
+    return;
+  }
+  visibleTurns.forEach((turn) => {
+    const item = document.createElement("li");
+    if (flaggedTurnIds.has(turn.turn_id)) item.classList.add("concern-line");
+    const role = document.createElement("span");
+    role.className = "turn-role";
+    role.textContent = turn.speaker;
+    const time = document.createElement("span");
+    time.className = "turn-time";
+    time.textContent = formatElapsed(turn.timestamp_ms);
+    const text = document.createElement("div");
+    appendHighlightedText(text, turn.text, query);
+    item.append(role, time, text);
+    const categories = concernsForTurn(session, turn.turn_id).map((concern) => concern.category.replaceAll("_", " "));
+    if (categories.length) {
+      const badge = document.createElement("small");
+      badge.textContent = `Concern: ${categories.join(", ")}`;
+      item.append(badge);
+    }
+    el.archiveTranscript.append(item);
+  });
+}
+
+function renderArchiveAlerts(session, query) {
+  el.archiveAlerts.innerHTML = "";
+  const alerts = session.alert_timeline.filter((entry) => {
+    if (!query) return true;
+    const concern = entry.concern;
+    return [concern.category, concern.explanation, concern.alert_text]
+      .join(" ").toLocaleLowerCase().includes(query.toLocaleLowerCase());
+  });
+  if (!alerts.length) {
+    el.archiveAlerts.innerHTML = '<p class="empty-state">No alerts match the current search.</p>';
+    return;
+  }
+  alerts.forEach((entry) => {
+    const item = document.createElement("article");
+    item.className = "archive-alert";
+    const time = document.createElement("time");
+    time.textContent = formatElapsed(entry.timestamp_ms);
+    const title = document.createElement("strong");
+    title.textContent = entry.concern.category.replaceAll("_", " ");
+    const explanation = document.createElement("p");
+    appendHighlightedText(explanation, entry.concern.explanation, query);
+    item.append(time, title, explanation);
+    el.archiveAlerts.append(item);
+  });
+}
+
+function renderSelectedArchive() {
+  const session = selectedArchive();
+  const available = Boolean(session);
+  el.archiveEmpty.classList.toggle("hidden", available);
+  el.archiveDisplay.classList.toggle("hidden", !available);
+  el.downloadJsonButton.disabled = !available;
+  el.downloadCsvButton.disabled = !available;
+  if (!session) return;
+  el.archiveTitle.textContent = session.name;
+  el.archiveDate.textContent = new Date(session.saved_at).toLocaleString();
+  el.archiveTurnCount.textContent = String(session.turns.length);
+  el.archiveConcernCount.textContent = String(session.concerns.length);
+  const query = el.archiveSearch.value.trim();
+  const concernOnly = document.querySelector('input[name="archiveLineFilter"]:checked')?.value === "concerns";
+  renderArchiveTranscript(session, query, concernOnly);
+  renderArchiveAlerts(session, query);
+}
+
+function renderArchivePage(preferredId = "") {
+  const archives = loadArchives().sort((a, b) => new Date(b.saved_at) - new Date(a.saved_at));
+  const previousId = preferredId || el.archiveSessionSelect.value;
+  el.archiveSessionSelect.innerHTML = "";
+  archives.forEach((archive) => {
+    const option = document.createElement("option");
+    option.value = archive.archive_id;
+    option.textContent = `${archive.name} — ${new Date(archive.saved_at).toLocaleDateString()}`;
+    el.archiveSessionSelect.append(option);
+  });
+  if (!archives.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No saved sessions";
+    el.archiveSessionSelect.append(option);
+  } else if (archives.some((archive) => archive.archive_id === previousId)) {
+    el.archiveSessionSelect.value = previousId;
+  }
+  renderSelectedArchive();
+}
+
+function showToast(message) {
+  el.toast.textContent = message;
+  el.toast.classList.remove("hidden");
+  setTimeout(() => el.toast.classList.add("hidden"), 2800);
+}
+
+async function stopAndOfferArchive() {
+  Object.values(state.captures).forEach((capture) => {
+    stopCurrentSegment(capture, capture.speechActive ? "finalize" : "discard");
+  });
+  stopLiveSession({ label: "Finalizing session" });
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await state.analysisQueue;
+  setUiState("Live session stopped");
+  const nextNumber = loadArchives().length + 1;
+  el.sessionNameInput.value = `Session #${nextNumber}`;
+  el.saveSessionError.classList.add("hidden");
+  el.saveSessionDialog.showModal();
+  el.sessionNameInput.select();
+}
+
+function saveCurrentSession() {
+  const name = el.sessionNameInput.value.trim();
+  if (!name) {
+    el.saveSessionError.classList.remove("hidden");
+    el.sessionNameInput.focus();
+    return;
+  }
+  const archive = {
+    schema_version: 1,
+    archive_id: newId("archive"),
+    name,
+    session_id: state.sessionId,
+    started_at: new Date(state.sessionStartedAt).toISOString(),
+    saved_at: new Date().toISOString(),
+    turns: structuredClone(state.turns),
+    concerns: structuredClone(state.concerns),
+    alert_timeline: structuredClone(state.alertTimeline),
+    analysis_metadata: structuredClone(state.analysisMetadata),
+  };
+  try {
+    const archives = loadArchives();
+    archives.push(archive);
+    storeArchives(archives);
+    el.saveSessionDialog.close();
+    resetSession();
+    renderArchivePage(archive.archive_id);
+    showToast(`Saved “${name}” to Past Interrogation Archives.`);
+  } catch (_) {
+    el.saveSessionError.textContent = "This browser could not save the session. Download it or clear browser storage and retry.";
+    el.saveSessionError.classList.remove("hidden");
+  }
+}
+
+function safeFilename(value) {
+  return value.trim().replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "").slice(0, 80) || "interrogation-session";
+}
+
+function downloadFile(filename, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function csvCell(value) {
+  let text = value == null ? "" : String(value);
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function sessionCsv(session) {
+  const columns = ["record_type", "timestamp_ms", "speaker", "turn_id", "text", "concern_id", "concern_type", "explanation", "alert_text", "evidence_turn_ids", "evidence_quotes"];
+  const rows = [columns];
+  session.turns.forEach((turn) => rows.push(["transcript", turn.timestamp_ms, turn.speaker, turn.turn_id, turn.text, "", "", "", "", "", ""]));
+  session.alert_timeline.forEach((entry) => rows.push([
+    "alert", entry.timestamp_ms, "", "", "", entry.concern.concern_id,
+    entry.concern.category, entry.concern.explanation, entry.concern.alert_text,
+    entry.concern.evidence.map((item) => item.turn_id).join(" | "),
+    entry.concern.evidence.map((item) => item.quote).join(" | "),
+  ]));
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function downloadSelectedArchive(format) {
+  const session = selectedArchive();
+  if (!session) return;
+  const base = safeFilename(session.name);
+  if (format === "json") {
+    downloadFile(`${base}.json`, JSON.stringify(session, null, 2), "application/json");
+  } else {
+    downloadFile(`${base}.csv`, sessionCsv(session), "text/csv;charset=utf-8");
+  }
+}
+
 el.recordButton.addEventListener("click", startLiveSession);
-el.stopButton.addEventListener("click", () => stopLiveSession({ label: "Live session stopped" }));
+el.stopButton.addEventListener("click", stopAndOfferArchive);
 el.cancelButton.addEventListener("click", () => {
   Object.values(state.captures).forEach((capture) => finalizeCurrentTurn(capture, "Manually finalized", true));
 });
@@ -753,6 +1055,29 @@ el.officerDeviceSelect.addEventListener("change", () => {
   renderControls();
 });
 navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMicrophoneDevices());
+document.querySelectorAll(".nav-link").forEach((link) => {
+  link.addEventListener("click", () => navigateToPage(link.dataset.page));
+});
+document.querySelectorAll("[data-go-page]").forEach((button) => {
+  button.addEventListener("click", () => navigateToPage(button.dataset.goPage));
+});
+el.navToggle.addEventListener("click", toggleSideNav);
+el.navBackdrop.addEventListener("click", closeSideNav);
+el.archiveSessionSelect.addEventListener("change", renderSelectedArchive);
+el.archiveSearch.addEventListener("input", renderSelectedArchive);
+document.querySelectorAll('input[name="archiveLineFilter"]').forEach((radio) => {
+  radio.addEventListener("change", renderSelectedArchive);
+});
+el.downloadJsonButton.addEventListener("click", () => downloadSelectedArchive("json"));
+el.downloadCsvButton.addEventListener("click", () => downloadSelectedArchive("csv"));
+el.saveSessionButton.addEventListener("click", saveCurrentSession);
+el.dontSaveSessionButton.addEventListener("click", () => {
+  el.saveSessionDialog.close();
+  resetSession();
+  showToast("Session was not saved.");
+});
+el.saveSessionDialog.addEventListener("cancel", () => resetSession());
+el.sessionNameInput.addEventListener("input", () => el.saveSessionError.classList.add("hidden"));
 
 if (!window.isSecureContext) {
   el.securityWarning.textContent = "Microphone recording requires HTTPS or localhost. Typed fallback remains available.";
@@ -765,6 +1090,10 @@ if (!navigator.mediaDevices || !window.MediaRecorder || !AudioContextClass) {
 
 resetSession();
 loadHealth();
+const initialPage = ["home", "monitor", "archives"].includes(location.hash.slice(1))
+  ? location.hash.slice(1)
+  : "home";
+navigateToPage(initialPage);
 window.addEventListener("pageshow", () => {
   setTimeout(() => refreshMicrophoneDevices({ useRecommended: true }), 100);
 }, { once: true });

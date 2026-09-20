@@ -3,124 +3,103 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Interrogation Risk Voice Demo</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <title>Interrogation Review Workspace</title>
+    <link rel="stylesheet" href="/styles.css?v=archives-2" />
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">STEELHACKS XIII / AUDIO MVP</p>
-          <h1>Interrogation Risk Voice Demo</h1>
-          <p class="lede">
-            Start one live session. A pause in speech finalizes each turn,
-            sends it for analysis, and speaks only new alerts.
-          </p>
-        </div>
-        <button id="resetButton" class="secondary">Reset session</button>
-      </header>
+    <button id="navToggle" class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+    <aside id="sideNav" class="side-nav" aria-label="Main navigation">
+      <div class="nav-brand"><span class="nav-mark">SH</span><div><strong>SteelHacks XIII</strong><small>Interrogation Review</small></div></div>
+      <nav>
+        <button class="nav-link active" data-page="home" type="button"><span>⌂</span> Home</button>
+        <button class="nav-link" data-page="monitor" type="button"><span>●</span> Live Interrogation Monitor</button>
+        <button class="nav-link" data-page="archives" type="button"><span>▤</span> Past Interrogation Archives</button>
+      </nav>
+      <p class="nav-footnote">Hackathon prototype<br />Human review required</p>
+    </aside>
+    <div id="navBackdrop" class="nav-backdrop hidden"></div>
 
-      <section class="status-strip" aria-live="polite">
-        <span id="statusDot" class="status-dot"></span>
-        <strong id="stateLabel">Loading</strong>
-        <span id="providerLabel">Checking providers...</span>
+    <main class="app-shell">
+      <section id="homePage" class="app-page active" data-page="home">
+        <header class="home-hero">
+          <p class="eyebrow">STEELHACKS XIII / AUDIO + AI</p>
+          <h1>Interrogation Review Workspace</h1>
+          <p>Monitor a live interrogation for potential concerns, or review and export a previously saved session.</p>
+        </header>
+        <div class="home-actions">
+          <button class="home-card" data-go-page="monitor" type="button">
+            <span class="home-card-icon live-icon">●</span>
+            <span><strong>Live Interrogation Monitor</strong><small>Capture two microphones, transcribe each turn, and receive immediate concern alerts.</small></span>
+            <span class="card-arrow">→</span>
+          </button>
+          <button class="home-card" data-go-page="archives" type="button">
+            <span class="home-card-icon">▤</span>
+            <span><strong>Past Interrogation Archives</strong><small>Search saved transcripts, inspect concern evidence, and download records for review.</small></span>
+            <span class="card-arrow">→</span>
+          </button>
+        </div>
       </section>
 
-      <div id="securityWarning" class="notice hidden" role="alert"></div>
-      <div class="disclaimer">
-        Hackathon prototype only. Results require human review and are not legal conclusions.
-      </div>
-
-      <section class="grid">
-        <article class="panel control-panel">
-          <h2>1. Live capture</h2>
-
-          <div class="microphone-heading">
-            <div>
-              <strong>Two-microphone setup</strong>
-              <p id="deviceStatus" class="capture-hint">Choose which physical microphone belongs to each person.</p>
-            </div>
-            <button id="refreshDevicesButton" class="secondary" type="button">Find microphones</button>
-          </div>
-
-          <div class="microphone-grid">
-            <div class="microphone-card">
-              <label for="suspectDeviceSelect">Suspect microphone</label>
-              <select id="suspectDeviceSelect" aria-describedby="suspectMeterLabel"></select>
-              <div class="voice-meter" aria-label="Suspect microphone activity">
-                <span id="suspectMeterFill"></span>
+      <section id="monitorPage" class="app-page" data-page="monitor">
+        <div class="shell">
+          <header class="hero">
+            <div><p class="eyebrow">LIVE INTERROGATION MONITOR</p><h1>Interrogation Risk Voice Demo</h1><p class="lede">Start one live session. A pause in speech finalizes each turn, sends it for analysis, and speaks only new alerts.</p></div>
+            <button id="resetButton" class="secondary">Reset session</button>
+          </header>
+          <section class="status-strip" aria-live="polite"><span id="statusDot" class="status-dot"></span><strong id="stateLabel">Loading</strong><span id="providerLabel">Checking providers...</span></section>
+          <div id="securityWarning" class="notice hidden" role="alert"></div>
+          <div class="disclaimer">Hackathon prototype only. Results require human review and are not legal conclusions.</div>
+          <section class="grid">
+            <article class="panel control-panel">
+              <h2>1. Live capture</h2>
+              <div class="microphone-heading"><div><strong>Two-microphone setup</strong><p id="deviceStatus" class="capture-hint">Choose which physical microphone belongs to each person.</p></div><button id="refreshDevicesButton" class="secondary" type="button">Find microphones</button></div>
+              <div class="microphone-grid">
+                <div class="microphone-card"><label for="suspectDeviceSelect">Suspect microphone</label><select id="suspectDeviceSelect" aria-describedby="suspectMeterLabel"></select><div class="voice-meter" aria-label="Suspect microphone activity"><span id="suspectMeterFill"></span></div><small id="suspectMeterLabel">Channel is always labeled Suspect.</small></div>
+                <div class="microphone-card"><label for="officerDeviceSelect">Officer microphone</label><select id="officerDeviceSelect" aria-describedby="officerMeterLabel"></select><div class="voice-meter" aria-label="Officer microphone activity"><span id="officerMeterFill"></span></div><small id="officerMeterLabel">Channel is always labeled Officer.</small></div>
               </div>
-              <small id="suspectMeterLabel">Channel is always labeled Suspect.</small>
-            </div>
-            <div class="microphone-card">
-              <label for="officerDeviceSelect">Officer microphone</label>
-              <select id="officerDeviceSelect" aria-describedby="officerMeterLabel"></select>
-              <div class="voice-meter" aria-label="Officer microphone activity">
-                <span id="officerMeterFill"></span>
-              </div>
-              <small id="officerMeterLabel">Channel is always labeled Officer.</small>
-            </div>
-          </div>
-
-          <div class="recording-card">
-            <div>
-              <span id="recordingIndicator" class="recording-indicator"></span>
-              <span id="recordingText">Ready to start</span>
-            </div>
-            <strong id="timer">00:00</strong>
-          </div>
-
-          <p class="capture-hint">
-            Either person may speak. Each microphone finalizes its own turn after about
-            1.3 seconds of silence. Capture pauses while a warning is spoken.
-          </p>
-
-          <div class="button-row">
-            <button id="recordButton" class="primary">Start live session</button>
-            <button id="stopButton" class="danger" disabled>Stop live session</button>
-            <button id="cancelButton" class="secondary" disabled>Finalize turn now</button>
-          </div>
-
-          <details>
-            <summary>Typed transcript fallback</summary>
-            <label for="speakerSelect">Speaker role</label>
-            <select id="speakerSelect">
-              <option value="officer">Officer</option>
-              <option value="suspect">Suspect</option>
-              <option value="unknown">Unknown</option>
-            </select>
-            <label for="textFallback">Use this if microphone or STT is unavailable</label>
-            <textarea
-              id="textFallback"
-              rows="4"
-              placeholder="Type one complete speaker turn..."
-            ></textarea>
-            <button id="analyzeTextButton" class="secondary">Analyze typed turn</button>
-          </details>
-        </article>
-
-        <article class="panel">
-          <h2>2. Session transcript</h2>
-          <p class="session-id">Session: <code id="sessionId"></code></p>
-          <ol id="turnList" class="turn-list">
-            <li class="empty-state">No turns recorded yet.</li>
-          </ol>
-        </article>
+              <div class="recording-card"><div><span id="recordingIndicator" class="recording-indicator"></span><span id="recordingText">Ready to start</span></div><strong id="timer">00:00</strong></div>
+              <p class="capture-hint">Either person may speak. Each microphone finalizes its own turn after about 1.3 seconds of silence. Capture pauses while a warning is spoken.</p>
+              <div class="button-row"><button id="recordButton" class="primary">Start live session</button><button id="stopButton" class="danger" disabled>Stop live session</button><button id="cancelButton" class="secondary" disabled>Finalize turn now</button></div>
+              <details>
+                <summary>Typed transcript fallback</summary>
+                <label for="speakerSelect">Speaker role</label><select id="speakerSelect"><option value="officer">Officer</option><option value="suspect">Suspect</option><option value="unknown">Unknown</option></select>
+                <label for="textFallback">Use this if microphone or STT is unavailable</label><textarea id="textFallback" rows="4" placeholder="Type one complete speaker turn..."></textarea>
+                <button id="analyzeTextButton" class="secondary">Analyze typed turn</button>
+              </details>
+            </article>
+            <article class="panel"><h2>2. Session transcript</h2><p class="session-id">Session: <code id="sessionId"></code></p><ol id="turnList" class="turn-list"><li class="empty-state">No turns recorded yet.</li></ol></article>
+          </section>
+          <section class="panel results-panel">
+            <div class="panel-heading"><div><h2>3. Analysis result</h2><p id="analysisSummary">Waiting for a finalized transcript.</p><p id="analysisMetadata" class="analysis-metadata hidden"></p></div><button id="stopAudioButton" class="secondary" disabled>Stop speaking</button></div>
+            <div id="errorPanel" class="error-panel hidden" role="alert"></div><div id="concernList" class="concern-list"></div>
+          </section>
+        </div>
       </section>
 
-      <section class="panel results-panel">
-        <div class="panel-heading">
-          <div>
-            <h2>3. Analysis result</h2>
-            <p id="analysisSummary">Waiting for a finalized transcript.</p>
-            <p id="analysisMetadata" class="analysis-metadata hidden"></p>
-          </div>
-          <button id="stopAudioButton" class="secondary" disabled>Stop speaking</button>
+      <section id="archivesPage" class="app-page" data-page="archives">
+        <div class="archive-shell">
+          <header class="page-header"><p class="eyebrow">PAST INTERROGATION ARCHIVES</p><h1>Saved session review</h1><p>Search the transcript or concern classifications, then export a complete review record.</p></header>
+          <section class="panel archive-controls">
+            <label for="archiveSearch">Search transcript or concern type</label><input id="archiveSearch" type="search" placeholder="Try: lawyer, threatened consequence, evidence claim…" />
+            <div class="archive-control-grid">
+              <div><label for="archiveSessionSelect">Archived session</label><select id="archiveSessionSelect"><option value="">No saved sessions</option></select></div>
+              <fieldset><legend>Transcript filter</legend><label><input type="radio" name="archiveLineFilter" value="all" checked /> Show all lines of transcript</label><label><input type="radio" name="archiveLineFilter" value="concerns" /> Show concern lines only</label></fieldset>
+            </div>
+            <div class="button-row archive-downloads"><button id="downloadJsonButton" class="primary" type="button">Download JSON</button><button id="downloadCsvButton" class="secondary" type="button">Download CSV</button></div>
+          </section>
+          <section id="archiveEmpty" class="panel archive-empty"><h2>No archived sessions yet</h2><p>Stop a live session and choose Save to place its transcript and alert timeline here.</p><button class="primary" data-go-page="monitor" type="button">Open Live Monitor</button></section>
+          <section id="archiveDisplay" class="archive-display hidden">
+            <div class="panel archive-summary"><div><span>Session</span><strong id="archiveTitle"></strong></div><div><span>Recorded</span><strong id="archiveDate"></strong></div><div><span>Transcript lines</span><strong id="archiveTurnCount"></strong></div><div><span>Concerns</span><strong id="archiveConcernCount"></strong></div></div>
+            <div class="archive-columns"><article class="panel"><h2>Transcript</h2><ol id="archiveTranscript" class="turn-list archive-transcript"></ol></article><article class="panel"><h2>Alert timeline</h2><div id="archiveAlerts" class="archive-alerts"></div></article></div>
+          </section>
         </div>
-        <div id="errorPanel" class="error-panel hidden" role="alert"></div>
-        <div id="concernList" class="concern-list"></div>
       </section>
     </main>
-    <script src="/app.js?v=dual-mic-10" defer></script>
+
+    <dialog id="saveSessionDialog" class="save-dialog">
+      <form method="dialog"><p class="eyebrow">ARCHIVE LIVE SESSION</p><h2>Name this interrogation session</h2><p>The transcript, detected concerns, and alert timeline will be saved in this browser.</p><label for="sessionNameInput">Session name</label><input id="sessionNameInput" type="text" maxlength="120" placeholder="Session #1 – Interview name" required /><p id="saveSessionError" class="field-error hidden">Enter a session name before saving.</p><div class="dialog-actions"><button id="dontSaveSessionButton" class="secondary" type="button">Don't Save</button><button id="saveSessionButton" class="primary" type="button">Save</button></div></form>
+    </dialog>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <script src="/app.js?v=archives-1" defer></script>
   </body>
 </html>

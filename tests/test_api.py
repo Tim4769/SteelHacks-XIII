@@ -16,6 +16,19 @@ def test_home_exposes_continuous_capture_controls():
     assert "officerMeterFill" in response.text
 
 
+def test_home_exposes_navigation_and_archive_controls():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Live Interrogation Monitor" in response.text
+    assert "Past Interrogation Archives" in response.text
+    assert 'id="archiveSearch"' in response.text
+    assert 'id="archiveSessionSelect"' in response.text
+    assert "Show concern lines only" in response.text
+    assert "Download JSON" in response.text
+    assert "Download CSV" in response.text
+    assert 'id="saveSessionDialog"' in response.text
+
+
 def test_health_reports_mock_modes():
     response = client.get("/api/health")
     assert response.status_code == 200
