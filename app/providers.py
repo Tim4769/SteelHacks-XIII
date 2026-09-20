@@ -34,6 +34,13 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
 
 
+RIGHTS_REMINDER = (
+    "Rights reminder for a United States custodial interrogation: You have the right "
+    "to remain silent. Anything you say may be used against you in court. You have "
+    "the right to speak with an attorney. This prototype is not legal advice."
+)
+
+
 @dataclass(frozen=True)
 class AudioResult:
     data: bytes
@@ -451,12 +458,25 @@ async def _analyze_with_team_module(request: AnalysisRequest) -> AnalysisRespons
     )
 
 
+def _with_rights_reminder(response: AnalysisResponse) -> AnalysisResponse:
+    """Add one consistent spoken reminder to every detected concern."""
+    concerns = [
+        concern
+        if RIGHTS_REMINDER in concern.alert_text
+        else concern.model_copy(
+            update={"alert_text": f"{concern.alert_text.rstrip()} {RIGHTS_REMINDER}"}
+        )
+        for concern in response.concerns
+    ]
+    return response.model_copy(update={"concerns": concerns})
+
+
 async def analyze_turns(*, settings: Settings, request: AnalysisRequest) -> AnalysisResponse:
     if settings.analysis_provider_mode == "mock":
-        return mock_analysis(request)
+        return _with_rights_reminder(mock_analysis(request))
 
     if settings.analysis_provider_mode == "nvidia":
-        return await _analyze_with_team_module(request)
+        return _with_rights_reminder(await _analyze_with_team_module(request))
 
     if not settings.nemotron_api_url:
         raise ProviderError(
@@ -488,7 +508,7 @@ async def analyze_turns(*, settings: Settings, request: AnalysisRequest) -> Anal
     if response.status_code >= 400:
         raise ProviderError("ANALYSIS_REJECTED", "Analysis rejected the request.")
     try:
-        return AnalysisResponse.model_validate(response.json())
+        return _with_rights_reminder(AnalysisResponse.model_validate(response.json()))
     except (ValueError, json.JSONDecodeError) as exc:
         raise ProviderError(
             "ANALYSIS_INVALID",

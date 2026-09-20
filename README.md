@@ -12,6 +12,8 @@ review.
 - One-speaker continuous browser capture with manual officer/suspect role.
 - Automatic turn finalization after about 1.3 seconds of silence.
 - Echo cancellation plus capture suppression while spoken alerts play.
+- A standardized U.S. custodial-interrogation rights reminder appended to every
+  detected-concern alert before ElevenLabs speaks it.
 - Runtime MIME selection with `MediaRecorder.isTypeSupported()`.
 - Backend-only ElevenLabs Scribe v2 and Flash v2.5 adapters.
 - Session-based Nemotron request and structured concern response contracts.

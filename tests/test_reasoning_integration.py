@@ -1,7 +1,11 @@
 import asyncio
 
 from app.contracts import AnalysisRequest
-from app.providers import _analyze_with_team_module
+from app.providers import (
+    RIGHTS_REMINDER,
+    _analyze_with_team_module,
+    _with_rights_reminder,
+)
 
 
 def test_counsel_request_flow_uses_only_officer_followup_as_evidence():
@@ -32,6 +36,9 @@ def test_counsel_request_flow_uses_only_officer_followup_as_evidence():
     assert evidence.turn_id == "officer-1"
     assert evidence.speaker.value == "officer"
     assert evidence.quote == "We will deal with that later. Did you hurt Donald?"
+
+    spoken_response = _with_rights_reminder(response)
+    assert all(concern.alert_text.endswith(RIGHTS_REMINDER) for concern in spoken_response.concerns)
 
 
 def test_combined_mislabeled_dialogue_is_not_called_a_confession_threat():
