@@ -10,7 +10,10 @@ def test_home_exposes_continuous_capture_controls():
     assert response.status_code == 200
     assert "Start live session" in response.text
     assert "Finalize turn now" in response.text
-    assert "voiceMeterFill" in response.text
+    assert "suspectDeviceSelect" in response.text
+    assert "officerDeviceSelect" in response.text
+    assert "suspectMeterFill" in response.text
+    assert "officerMeterFill" in response.text
 
 
 def test_health_reports_mock_modes():

@@ -11,18 +11,32 @@ const VAD = Object.freeze({
 
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
+function emptyCapture(role, meterId) {
+  return {
+    role,
+    meterId,
+    mediaStream: null,
+    currentSegment: null,
+    audioSource: null,
+    analyser: null,
+    waveform: null,
+    speechActive: false,
+    speechStartedAt: null,
+    speechLoudMs: 0,
+    silenceStartedAt: null,
+  };
+}
+
 const state = {
   sessionId: null,
   sessionStartedAt: null,
-  sessionRole: null,
   turns: [],
   seenConcernIds: new Set(),
-  mediaStream: null,
-  currentSegment: null,
+  captures: {
+    suspect: emptyCapture("suspect", "suspectMeterFill"),
+    officer: emptyCapture("officer", "officerMeterFill"),
+  },
   audioContext: null,
-  audioSource: null,
-  analyser: null,
-  waveform: null,
   vadHandle: null,
   liveSession: false,
   captureSuppressed: false,
@@ -36,13 +50,15 @@ const state = {
   activeAudioResolver: null,
   analysisQueue: Promise.resolve(),
   queuedTurns: 0,
+  deviceChoicesInitialized: false,
 };
 
 const el = Object.fromEntries(
   [
     "resetButton", "stateLabel", "providerLabel", "securityWarning",
-    "speakerSelect", "recordButton", "stopButton", "cancelButton",
-    "recordingIndicator", "recordingText", "timer", "voiceMeterFill",
+    "speakerSelect", "suspectDeviceSelect", "officerDeviceSelect", "refreshDevicesButton",
+    "deviceStatus", "recordButton", "stopButton", "cancelButton",
+    "recordingIndicator", "recordingText", "timer", "suspectMeterFill", "officerMeterFill",
     "textFallback", "analyzeTextButton", "sessionId", "turnList",
     "analysisSummary", "analysisMetadata", "errorPanel", "concernList", "stopAudioButton",
   ].map((id) => [id, document.getElementById(id)])
@@ -64,10 +80,13 @@ function setIndicator(mode) {
 
 function renderControls() {
   const supported = Boolean(navigator.mediaDevices && window.MediaRecorder);
-  el.recordButton.disabled = state.liveSession || !supported;
+  const devicesChosen = Boolean(el.suspectDeviceSelect.value && el.officerDeviceSelect.value);
+  el.recordButton.disabled = state.liveSession || !supported || !devicesChosen;
   el.stopButton.disabled = !state.liveSession;
   el.cancelButton.disabled = !state.liveSession || state.captureSuppressed;
-  el.speakerSelect.disabled = state.liveSession;
+  el.suspectDeviceSelect.disabled = state.liveSession;
+  el.officerDeviceSelect.disabled = state.liveSession;
+  el.refreshDevicesButton.disabled = state.liveSession;
   el.analyzeTextButton.disabled = state.queuedTurns > 0;
   el.recordButton.textContent = "Start live session";
 }
@@ -86,34 +105,38 @@ function stopCurrentAudio() {
   el.stopAudioButton.disabled = true;
 }
 
-function resetVadState() {
-  state.speechActive = false;
-  state.speechStartedAt = null;
-  state.speechLoudMs = 0;
-  state.silenceStartedAt = null;
-  el.voiceMeterFill.style.width = "0%";
+function resetVadState(capture) {
+  capture.speechActive = false;
+  capture.speechStartedAt = null;
+  capture.speechLoudMs = 0;
+  capture.silenceStartedAt = null;
+  el[capture.meterId].style.width = "0%";
 }
 
 function stopMediaTracks() {
-  if (state.mediaStream) state.mediaStream.getTracks().forEach((track) => track.stop());
-  state.mediaStream = null;
+  Object.values(state.captures).forEach((capture) => {
+    capture.mediaStream?.getTracks().forEach((track) => track.stop());
+    capture.mediaStream = null;
+  });
 }
 
 function teardownAudioAnalysis() {
   clearInterval(state.vadHandle);
   state.vadHandle = null;
-  state.audioSource?.disconnect();
-  state.audioSource = null;
-  state.analyser = null;
-  state.waveform = null;
+  Object.values(state.captures).forEach((capture) => {
+    capture.audioSource?.disconnect();
+    capture.audioSource = null;
+    capture.analyser = null;
+    capture.waveform = null;
+  });
   if (state.audioContext && state.audioContext.state !== "closed") {
     state.audioContext.close().catch(() => {});
   }
   state.audioContext = null;
 }
 
-function stopCurrentSegment(mode = "discard") {
-  const segment = state.currentSegment;
+function stopCurrentSegment(capture, mode = "discard") {
+  const segment = capture.currentSegment;
   if (!segment || segment.recorder.state === "inactive") return;
   segment.stopMode = mode;
   segment.durationMs = Date.now() - segment.startedAt;
@@ -123,16 +146,17 @@ function stopCurrentSegment(mode = "discard") {
 function stopLiveSession({ label = "Stopped", preserveAudio = false } = {}) {
   state.liveSession = false;
   state.captureSuppressed = false;
-  stopCurrentSegment("discard");
+  Object.values(state.captures).forEach((capture) => stopCurrentSegment(capture, "discard"));
   teardownAudioAnalysis();
   stopMediaTracks();
   clearInterval(state.timerHandle);
   state.timerHandle = null;
   if (!preserveAudio) stopCurrentAudio();
-  resetVadState();
+  Object.values(state.captures).forEach(resetVadState);
   setIndicator(null);
   el.recordingText.textContent = "Ready to start";
   el.timer.textContent = "00:00";
+  updateSelectedDeviceStatus();
   renderControls();
   setUiState(label);
 }
@@ -143,7 +167,6 @@ function resetSession() {
   stopLiveSession({ label: "Idle" });
   state.sessionId = newId("session");
   state.sessionStartedAt = Date.now();
-  state.sessionRole = null;
   state.turns = [];
   state.seenConcernIds.clear();
   state.analysisQueue = Promise.resolve();
@@ -176,12 +199,12 @@ function updateTimer() {
   el.timer.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function createSegmentRecorder() {
-  if (!state.liveSession || state.captureSuppressed || !state.mediaStream || state.currentSegment) return;
+function createSegmentRecorder(capture) {
+  if (!state.liveSession || state.captureSuppressed || !capture.mediaStream || capture.currentSegment) return;
   const mimeType = preferredMimeType();
   const recorder = mimeType
-    ? new MediaRecorder(state.mediaStream, { mimeType })
-    : new MediaRecorder(state.mediaStream);
+    ? new MediaRecorder(capture.mediaStream, { mimeType })
+    : new MediaRecorder(capture.mediaStream);
   const segment = {
     recorder,
     chunks: [],
@@ -189,22 +212,22 @@ function createSegmentRecorder() {
     stopMode: "discard",
     durationMs: 0,
     turnId: newId("turn"),
-    speaker: state.sessionRole,
+    speaker: capture.role,
     timestampMs: Date.now() - state.sessionStartedAt,
   };
-  state.currentSegment = segment;
+  capture.currentSegment = segment;
   recorder.addEventListener("dataavailable", (event) => {
     if (event.data.size > 0) segment.chunks.push(event.data);
   });
-  recorder.addEventListener("stop", () => handleStoppedSegment(segment));
+  recorder.addEventListener("stop", () => handleStoppedSegment(capture, segment));
   recorder.start(250);
 }
 
-function handleStoppedSegment(segment) {
-  if (state.currentSegment === segment) state.currentSegment = null;
+function handleStoppedSegment(capture, segment) {
+  if (capture.currentSegment === segment) capture.currentSegment = null;
   const type = segment.recorder.mimeType || segment.chunks[0]?.type || "audio/webm";
   const blob = new Blob(segment.chunks, { type });
-  if (state.liveSession && !state.captureSuppressed) createSegmentRecorder();
+  if (state.liveSession && !state.captureSuppressed) createSegmentRecorder(capture);
   if (segment.stopMode === "finalize" && blob.size > 0) {
     enqueueRecordedTurn(blob, segment);
   }
@@ -212,11 +235,13 @@ function handleStoppedSegment(segment) {
 
 function setupAudioAnalysis() {
   state.audioContext = new AudioContextClass();
-  state.audioSource = state.audioContext.createMediaStreamSource(state.mediaStream);
-  state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 2048;
-  state.waveform = new Float32Array(state.analyser.fftSize);
-  state.audioSource.connect(state.analyser);
+  Object.values(state.captures).forEach((capture) => {
+    capture.audioSource = state.audioContext.createMediaStreamSource(capture.mediaStream);
+    capture.analyser = state.audioContext.createAnalyser();
+    capture.analyser.fftSize = 2048;
+    capture.waveform = new Float32Array(capture.analyser.fftSize);
+    capture.audioSource.connect(capture.analyser);
+  });
   state.vadHandle = setInterval(sampleVoiceActivity, VAD.sampleEveryMs);
 }
 
@@ -226,57 +251,66 @@ function rootMeanSquare(values) {
   return Math.sqrt(total / values.length);
 }
 
-function sampleVoiceActivity() {
-  if (!state.liveSession || state.captureSuppressed || !state.analyser) return;
-  state.analyser.getFloatTimeDomainData(state.waveform);
-  const volume = rootMeanSquare(state.waveform);
-  el.voiceMeterFill.style.width = `${Math.min(100, Math.round(volume * 900))}%`;
-  const now = Date.now();
-  const segmentAge = state.currentSegment ? now - state.currentSegment.startedAt : 0;
+function capitalize(value) {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
 
-  if (!state.speechActive && volume >= VAD.speechThreshold) {
-    state.speechActive = true;
-    state.speechStartedAt = now;
-    state.speechLoudMs = VAD.sampleEveryMs;
-    state.silenceStartedAt = null;
-    if (state.currentSegment) {
-      state.currentSegment.timestampMs = now - state.sessionStartedAt;
+function sampleVoiceActivity() {
+  if (!state.liveSession || state.captureSuppressed) return;
+  Object.values(state.captures).forEach(sampleCaptureVoiceActivity);
+}
+
+function sampleCaptureVoiceActivity(capture) {
+  if (!capture.analyser) return;
+  capture.analyser.getFloatTimeDomainData(capture.waveform);
+  const volume = rootMeanSquare(capture.waveform);
+  el[capture.meterId].style.width = `${Math.min(100, Math.round(volume * 900))}%`;
+  const now = Date.now();
+  const segmentAge = capture.currentSegment ? now - capture.currentSegment.startedAt : 0;
+
+  if (!capture.speechActive && volume >= VAD.speechThreshold) {
+    capture.speechActive = true;
+    capture.speechStartedAt = now;
+    capture.speechLoudMs = VAD.sampleEveryMs;
+    capture.silenceStartedAt = null;
+    if (capture.currentSegment) {
+      capture.currentSegment.timestampMs = now - state.sessionStartedAt;
     }
     setIndicator("live");
-    el.recordingText.textContent = "Speech detected";
-    setUiState("Listening / speech detected");
+    el.recordingText.textContent = `${capitalize(capture.role)} speech detected`;
+    setUiState(`Listening / ${capture.role} speech detected`);
     return;
   }
 
-  if (state.speechActive) {
+  if (capture.speechActive) {
     if (volume > VAD.silenceThreshold) {
-      state.speechLoudMs += VAD.sampleEveryMs;
+      capture.speechLoudMs += VAD.sampleEveryMs;
     }
     if (volume <= VAD.silenceThreshold) {
-      state.silenceStartedAt ??= now;
-      const silenceMs = now - state.silenceStartedAt;
+      capture.silenceStartedAt ??= now;
+      const silenceMs = now - capture.silenceStartedAt;
       if (
         silenceMs >= VAD.endOfTurnSilenceMs
-        && state.speechLoudMs >= VAD.minimumSpeechMs
+        && capture.speechLoudMs >= VAD.minimumSpeechMs
       ) {
-        finalizeCurrentTurn("Pause detected");
+        finalizeCurrentTurn(capture, "Pause detected");
         return;
       }
     } else {
-      state.silenceStartedAt = null;
+      capture.silenceStartedAt = null;
     }
     if (segmentAge >= VAD.maximumSegmentMs) {
-      finalizeCurrentTurn("Maximum turn length reached");
+      finalizeCurrentTurn(capture, "Maximum turn length reached");
     }
   } else if (segmentAge >= VAD.idleRotationMs) {
-    stopCurrentSegment("discard");
+    stopCurrentSegment(capture, "discard");
   }
 }
 
-function finalizeCurrentTurn(reason = "Turn finalized", force = false) {
-  if (!state.liveSession || state.captureSuppressed || !state.currentSegment) return;
-  const hadSpeech = state.speechActive;
-  resetVadState();
+function finalizeCurrentTurn(capture, reason = "Turn finalized", force = false) {
+  if (!state.liveSession || state.captureSuppressed || !capture.currentSegment) return;
+  const hadSpeech = capture.speechActive;
+  resetVadState(capture);
   if (!hadSpeech && !force) {
     el.recordingText.textContent = "Listening for speech";
     return;
@@ -284,7 +318,116 @@ function finalizeCurrentTurn(reason = "Turn finalized", force = false) {
   setIndicator("listening");
   el.recordingText.textContent = `${reason}; continuing to listen`;
   setUiState("Turn queued for transcription");
-  stopCurrentSegment("finalize");
+  stopCurrentSegment(capture, "finalize");
+}
+
+function audioConstraints(deviceId) {
+  return {
+    deviceId: { exact: deviceId },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+  };
+}
+
+function displayDeviceName(device, index) {
+  return device.label || `Microphone ${index + 1} (permission required for its name)`;
+}
+
+function pickSuggestedDevice(devices, role, otherDeviceId = "") {
+  const preferredPattern = role === "suspect"
+    ? /\biphone\b|\bphone\b|continuity/i
+    : /macbook|built-in|internal/i;
+  const preferred = devices.find((device) => {
+    return device.deviceId !== otherDeviceId && preferredPattern.test(device.label);
+  });
+  const physicalFallback = role === "suspect"
+    ? [...devices].reverse().find((device) => !/virtual/i.test(device.label) && device.deviceId !== otherDeviceId)
+    : devices.find((device) => !/virtual/i.test(device.label) && device.deviceId !== otherDeviceId);
+  return preferred
+    || physicalFallback
+    || devices.find((device) => device.deviceId !== otherDeviceId)
+    || devices[0];
+}
+
+function populateDeviceSelect(select, devices, previousValue, suggestedValue) {
+  select.innerHTML = "";
+  devices.forEach((device, index) => {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = displayDeviceName(device, index);
+    select.append(option);
+  });
+  if (devices.some((device) => device.deviceId === previousValue)) {
+    select.value = previousValue;
+  } else if (suggestedValue) {
+    const suggestedIndex = devices.findIndex((device) => device.deviceId === suggestedValue);
+    select.selectedIndex = suggestedIndex >= 0 ? suggestedIndex : 0;
+  }
+}
+
+function selectRecommendedMappings() {
+  const suspectOptions = [...el.suspectDeviceSelect.options];
+  const officerOptions = [...el.officerDeviceSelect.options];
+  const suspectIndex = suspectOptions.findIndex((option) => /\biphone\b|\bphone\b|continuity/i.test(option.textContent));
+  const officerIndex = officerOptions.findIndex((option) => /macbook|built-in|internal/i.test(option.textContent));
+  if (suspectIndex >= 0) el.suspectDeviceSelect.selectedIndex = suspectIndex;
+  if (officerIndex >= 0) el.officerDeviceSelect.selectedIndex = officerIndex;
+}
+
+function updateSelectedDeviceStatus(prefix = "Selected mapping") {
+  const suspectName = el.suspectDeviceSelect.selectedOptions[0]?.textContent;
+  const officerName = el.officerDeviceSelect.selectedOptions[0]?.textContent;
+  if (suspectName && officerName) {
+    el.deviceStatus.textContent = `${prefix}: ${suspectName} = Suspect; ${officerName} = Officer.`;
+  }
+}
+
+async function refreshMicrophoneDevices({ requestPermission = false, useRecommended = false } = {}) {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  let permissionStream = null;
+  try {
+    if (requestPermission) {
+      permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    const devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "audioinput" && device.deviceId !== "default");
+    const microphones = devices.length
+      ? devices
+      : (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "audioinput");
+    const preserveChoices = state.deviceChoicesInitialized && !useRecommended;
+    const previousSuspect = preserveChoices ? el.suspectDeviceSelect.value : "";
+    const previousOfficer = preserveChoices ? el.officerDeviceSelect.value : "";
+    const suspectSuggestion = pickSuggestedDevice(microphones, "suspect");
+    const officerSuggestion = pickSuggestedDevice(microphones, "officer", suspectSuggestion?.deviceId);
+    populateDeviceSelect(el.suspectDeviceSelect, microphones, previousSuspect, suspectSuggestion?.deviceId);
+    populateDeviceSelect(el.officerDeviceSelect, microphones, previousOfficer, officerSuggestion?.deviceId);
+    if (useRecommended) selectRecommendedMappings();
+    state.deviceChoicesInitialized = true;
+    const named = microphones.filter((device) => device.label).length;
+    if (microphones.length < 2) {
+      el.deviceStatus.textContent = "Only one microphone is visible. Connect the iPhone, then press Find microphones again.";
+    } else if (!named) {
+      el.deviceStatus.textContent = "Microphones found. Press Find microphones and allow access to reveal their names.";
+    } else {
+      updateSelectedDeviceStatus(`${microphones.length} microphones found. Current mapping`);
+    }
+  } catch (_) {
+    el.deviceStatus.textContent = "Microphone permission was not granted. Allow access, then try again.";
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+    renderControls();
+  }
+}
+
+async function openRoleMicrophone(role, deviceId) {
+  const capture = state.captures[role];
+  capture.mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: audioConstraints(deviceId),
+  });
+  const [track] = capture.mediaStream.getAudioTracks();
+  return track?.label || `${capitalize(role)} microphone`;
 }
 
 async function startLiveSession() {
@@ -295,31 +438,38 @@ async function startLiveSession() {
   if (state.liveSession) return;
   stopCurrentAudio();
   el.errorPanel.classList.add("hidden");
+  const suspectDeviceId = el.suspectDeviceSelect.value;
+  const officerDeviceId = el.officerDeviceSelect.value;
+  if (!suspectDeviceId || !officerDeviceId) {
+    showError("MIC_SELECTION_REQUIRED", "Choose both microphones first.", false);
+    return;
+  }
+  if (suspectDeviceId === officerDeviceId) {
+    showError("MIC_SELECTION_DUPLICATE", "Choose two different microphones so each person has a separate channel.", false);
+    return;
+  }
   try {
-    state.mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-      },
-    });
-    state.sessionRole = el.speakerSelect.value;
+    const suspectLabel = await openRoleMicrophone("suspect", suspectDeviceId);
+    const officerLabel = await openRoleMicrophone("officer", officerDeviceId);
     state.sessionStartedAt = Date.now();
     state.liveSession = true;
     state.captureSuppressed = false;
-    resetVadState();
+    Object.values(state.captures).forEach(resetVadState);
     setupAudioAnalysis();
     await state.audioContext.resume();
-    createSegmentRecorder();
+    Object.values(state.captures).forEach(createSegmentRecorder);
     state.timerHandle = setInterval(updateTimer, 250);
     setIndicator("listening");
-    el.recordingText.textContent = `Listening for ${state.sessionRole} speech`;
+    el.recordingText.textContent = "Listening to Suspect and Officer";
+    el.deviceStatus.textContent = `Live: ${suspectLabel} = Suspect; ${officerLabel} = Officer.`;
     setUiState("Listening");
     renderControls();
-  } catch (_) {
+  } catch (error) {
     stopLiveSession({ label: "Microphone unavailable" });
-    showError("MIC_PERMISSION_DENIED", "Microphone access is unavailable. Enable it and retry.", true);
+    const message = error.name === "NotReadableError"
+      ? "The browser could not open both microphones at once. Close other audio apps or create a macOS Aggregate Device, then retry."
+      : "One of the selected microphones is unavailable. Check permission and the two selections, then retry.";
+    showError(error.name || "MIC_PERMISSION_DENIED", message, true);
   }
 }
 
@@ -353,7 +503,7 @@ function enqueueRecordedTurn(blob, segment) {
       renderControls();
       if (state.liveSession && !state.captureSuppressed) {
         setIndicator("listening");
-        el.recordingText.textContent = `Listening for ${state.sessionRole} speech`;
+        el.recordingText.textContent = "Listening to Suspect and Officer";
         setUiState("Listening");
       }
     });
@@ -486,8 +636,10 @@ async function renderAnalysis(result, sessionAtStart) {
 function suspendCaptureForAlert() {
   if (!state.liveSession) return;
   state.captureSuppressed = true;
-  resetVadState();
-  stopCurrentSegment("discard");
+  Object.values(state.captures).forEach((capture) => {
+    resetVadState(capture);
+    stopCurrentSegment(capture, "discard");
+  });
   setIndicator("paused");
   el.recordingText.textContent = "Capture paused during spoken warning";
   renderControls();
@@ -497,10 +649,12 @@ async function resumeCaptureAfterAlert(sessionAtStart) {
   await new Promise((resolve) => setTimeout(resolve, VAD.alertRecoveryMs));
   if (!state.liveSession || state.sessionId !== sessionAtStart) return;
   state.captureSuppressed = false;
-  resetVadState();
-  createSegmentRecorder();
+  Object.values(state.captures).forEach((capture) => {
+    resetVadState(capture);
+    createSegmentRecorder(capture);
+  });
   setIndicator("listening");
-  el.recordingText.textContent = `Listening for ${state.sessionRole} speech`;
+  el.recordingText.textContent = "Listening to Suspect and Officer";
   setUiState("Listening");
   renderControls();
 }
@@ -580,10 +734,25 @@ async function loadHealth() {
 
 el.recordButton.addEventListener("click", startLiveSession);
 el.stopButton.addEventListener("click", () => stopLiveSession({ label: "Live session stopped" }));
-el.cancelButton.addEventListener("click", () => finalizeCurrentTurn("Manually finalized", true));
+el.cancelButton.addEventListener("click", () => {
+  Object.values(state.captures).forEach((capture) => finalizeCurrentTurn(capture, "Manually finalized", true));
+});
 el.analyzeTextButton.addEventListener("click", analyzeTypedTurn);
 el.resetButton.addEventListener("click", resetSession);
 el.stopAudioButton.addEventListener("click", stopCurrentAudio);
+el.refreshDevicesButton.addEventListener("click", () => refreshMicrophoneDevices({
+  requestPermission: true,
+  useRecommended: true,
+}));
+el.suspectDeviceSelect.addEventListener("change", () => {
+  updateSelectedDeviceStatus();
+  renderControls();
+});
+el.officerDeviceSelect.addEventListener("change", () => {
+  updateSelectedDeviceStatus();
+  renderControls();
+});
+navigator.mediaDevices?.addEventListener?.("devicechange", () => refreshMicrophoneDevices());
 
 if (!window.isSecureContext) {
   el.securityWarning.textContent = "Microphone recording requires HTTPS or localhost. Typed fallback remains available.";
@@ -596,3 +765,6 @@ if (!navigator.mediaDevices || !window.MediaRecorder || !AudioContextClass) {
 
 resetSession();
 loadHealth();
+window.addEventListener("pageshow", () => {
+  setTimeout(() => refreshMicrophoneDevices({ useRecommended: true }), 100);
+}, { once: true });
