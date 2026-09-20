@@ -1,63 +1,87 @@
-"""Nemotron analysis client matching Person 2's integration plan.
-
-Person 3 POSTs finalized turns to POST /api/analyze and renders concerns.
-Person 2 hosts Nemotron; this UI never holds the NVIDIA key.
-
-Until NEMOTRON_ANALYZE_URL is set, analyze_turns() returns the same JSON
-shape using a local heuristic so the interface can be demoed.
-"""
+"""Analysis client: Josh's Nemotron module with local fallback, else heuristics."""
 
 from __future__ import annotations
 
+import sys
+import uuid
+from pathlib import Path
 from typing import Any
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+# Copied from Josh's Streamlit adapter so the UI still loads if analysis extras fail.
 CATEGORY_LABELS = {
+    "benefit_conditioned_on_confession": "Potential Inducement",
+    "threat_conditioned_on_confession": "Potential Coercive Threat",
+    "third_party_threat_conditioned_on_confession": "Potential Third-Party Threat",
+    "deprivation_conditioned_on_confession": "Potential Conditional Deprivation",
+    "evidence_claim_used_as_pressure": "Potential Evidence-Claim Pressure",
+    "minimization_used_to_elicit_admission": "Potential Minimization Tactic",
+    "questioning_after_counsel_request": "Potential Questioning After Counsel Request",
+    "leading_question": "Leading Question",
     "benefit_for_confession": "False Promise of Leniency",
     "threat_for_confession": "Coercive Threat",
-    "questioning_after_counsel_request": "Questioning After Counsel Request",
-    "leading_question": "Leading Question",
 }
 
-# Person 2's hosted URL (not localhost on another laptop).
-NEMOTRON_ANALYZE_URL = None  # e.g. "https://team-backend.example/api/analyze"
-NEMOTRON_RESET_URL = None  # e.g. "https://team-backend.example/api/reset-session"
+MEDIUM_CATEGORIES = {"leading_question", "minimization_used_to_elicit_admission"}
+
+_analyzer = None
 
 
-def build_analyze_payload(session_id: str, turns: list[dict[str, Any]]) -> dict[str, Any]:
-    """Request body for Person 2 POST /api/analyze."""
+def _get_analyzer():
+    global _analyzer
+    if _analyzer is None:
+        from steelhacks_reasoning import DialogueAnalyzer
+
+        _analyzer = DialogueAnalyzer()
+    return _analyzer
+
+
+def _compact_turn(turn: dict[str, Any]) -> dict[str, Any]:
+    speaker = turn.get("speaker") or "unknown"
+    if speaker not in {"officer", "suspect", "unknown", "narrator", "witness"}:
+        speaker = "unknown"
     return {
-        "session_id": session_id,
-        "turns": [
-            {
-                "turn_id": t["turn_id"],
-                "speaker": t["speaker"],
-                "text": t["text"],
-                "timestamp_ms": t.get("timestamp_ms"),
-            }
-            for t in turns
-        ],
+        "turn_id": turn["turn_id"],
+        "speaker": speaker,
+        "text": turn["text"],
+        "timestamp_ms": turn.get("timestamp_ms"),
     }
 
 
-def analyze_turns(session_id: str, new_turns: list[dict[str, Any]]) -> dict[str, Any]:
-    """Analyze newly finalized turns.
-
-    Later:
-        import requests
-        response = requests.post(NEMOTRON_ANALYZE_URL, json=payload, timeout=30)
-        return response.json()
-    """
-    payload = build_analyze_payload(session_id, new_turns)
-    if NEMOTRON_ANALYZE_URL:
-        raise NotImplementedError("Set NEMOTRON_ANALYZE_URL and POST to Person 2.")
-    return _heuristic_analyze(payload)
+def analyze_turns(
+    session_id: str,
+    new_turns: list[dict[str, Any]],
+    context_turns: list[dict[str, Any]] | None = None,
+    sequence_number: int = 1,
+) -> dict[str, Any]:
+    payload = {
+        "session_id": session_id,
+        "request_id": f"req-{uuid.uuid4().hex[:10]}",
+        "sequence_number": max(0, int(sequence_number)),
+        "context_turns": [_compact_turn(t) for t in (context_turns or [])],
+        "new_turns": [_compact_turn(t) for t in new_turns],
+    }
+    try:
+        response = _get_analyzer().analyze_dialogue(payload)
+        data = response.model_dump(mode="json")
+        err = data.get("error")
+        if isinstance(err, dict):
+            data["error"] = err.get("message")
+        return data
+    except Exception:
+        return _heuristic_analyze({"session_id": session_id, "turns": payload["new_turns"]})
 
 
 def reset_remote_session(session_id: str) -> None:
-    """Person 2 POST /api/reset-session. No-op until the backend is hosted."""
-    _ = session_id
-    if NEMOTRON_RESET_URL:
-        raise NotImplementedError("Set NEMOTRON_RESET_URL and POST {session_id}.")
+    if not session_id:
+        return
+    try:
+        _get_analyzer().reset_session(session_id)
+    except Exception:
+        return
 
 
 def _heuristic_analyze(payload: dict[str, Any]) -> dict[str, Any]:
@@ -82,13 +106,13 @@ def _heuristic_analyze(payload: dict[str, Any]) -> dict[str, Any]:
             )
             alert_text = "Potential questioning after counsel request. Review this turn."
         elif any(k in text for k in ("confess", "go home", "go easy", "help you out")):
-            category = "benefit_for_confession"
+            category = "benefit_conditioned_on_confession"
             explanation = (
                 "The officer appears to offer a specific benefit in exchange for a confession."
             )
             alert_text = "Potential inducement detected. Review the promise of benefit."
         elif any(k in text for k in ("never see", "worse for you", "you'll regret", "stack charges")):
-            category = "threat_for_confession"
+            category = "threat_conditioned_on_confession"
             explanation = "The officer uses a threat to pressure a confession."
             alert_text = "Potential coercive threat detected. Review this turn."
         elif text.strip().endswith("didn't you") or text.strip().startswith("you were"):

@@ -21,8 +21,8 @@ with left:
     with st.container(border=True):
         st.subheader("Live Interrogation Monitor")
         st.write(
-            "Start a microphone stream or upload sample audio. Watch a "
-            "timestamped transcript and high-risk rights cautions."
+            "Record officer and suspect audio on two inputs, transcribe "
+            "each turn, and surface high-risk rights cautions."
         )
         if st.button("Go to live monitor", type="primary", width="stretch"):
             st.switch_page("pages/2_Live_Interrogation_Monitor.py")

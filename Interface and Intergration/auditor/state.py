@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import time
@@ -14,7 +15,7 @@ import streamlit as st
 
 from auditor.demo_data import sample_archives
 from auditor.elevenlabs import synthesize_alert, transcribe_audio
-from auditor.nemotron import CATEGORY_LABELS, analyze_turns, reset_remote_session
+from auditor.nemotron import CATEGORY_LABELS, MEDIUM_CATEGORIES, analyze_turns, reset_remote_session
 
 
 def init_state() -> None:
@@ -95,6 +96,8 @@ def reset_live_session() -> None:
     st.session_state.demo_cursor = 0
     st.session_state.played_concern_ids = set()
     st.session_state.last_spoken_alert = None
+    st.session_state.pop("_audio_digest_officer", None)
+    st.session_state.pop("_audio_digest_suspect", None)
 
 
 def stop_stream(save_to_archive: bool = True) -> None:
@@ -137,14 +140,50 @@ def ingest_text_turn(speaker: str, text: str) -> None:
     session["turns"].append(turn)
 
 
-def ingest_audio(file_name: str, audio_bytes: bytes) -> None:
+def ingest_audio(
+    file_name: str,
+    audio_bytes: bytes,
+    speaker: str = "officer",
+    content_type: str | None = None,
+) -> None:
     start_stream()
-    for piece in transcribe_audio(file_name, audio_bytes):
-        ingest_text_turn(piece.get("speaker", "unknown"), piece.get("text", ""))
+    for piece in transcribe_audio(
+        file_name,
+        audio_bytes,
+        speaker=speaker,
+        content_type=content_type,
+    ):
+        ingest_text_turn(piece.get("speaker", speaker), piece.get("text", ""))
+
+
+def ingest_clip_if_new(clip: Any, speaker: str) -> bool:
+    """Transcribe a Streamlit audio clip once per unique recording."""
+    if clip is None:
+        return False
+    audio_bytes = clip.getvalue()
+    if not audio_bytes:
+        return False
+    digest = hashlib.sha256(audio_bytes).hexdigest()
+    key = f"_audio_digest_{speaker}"
+    if st.session_state.get(key) == digest:
+        return False
+    ingest_audio(
+        getattr(clip, "name", None) or f"{speaker}.webm",
+        audio_bytes,
+        speaker=speaker,
+        content_type=getattr(clip, "type", None),
+    )
+    st.session_state[key] = digest
+    return True
 
 
 def apply_analysis(session: dict[str, Any], new_turns: list[dict[str, Any]]) -> None:
-    result = analyze_turns(session["session_id"], new_turns)
+    result = analyze_turns(
+        session["session_id"],
+        new_turns,
+        context_turns=session.get("turns") or [],
+        sequence_number=session.get("turn_counter") or 1,
+    )
     status = result.get("status")
     if result.get("error") or status == "error":
         session["active_alert"] = {
@@ -165,7 +204,7 @@ def apply_analysis(session: dict[str, Any], new_turns: list[dict[str, Any]]) -> 
         evidence = (concern.get("evidence") or [{}])[0]
         turn = by_id.get(evidence.get("turn_id"))
         category = concern.get("category")
-        risk_level = "medium" if category == "leading_question" else "high"
+        risk_level = "medium" if category in MEDIUM_CATEGORIES else "high"
         if turn:
             turn["category"] = category
             turn["violation_type"] = CATEGORY_LABELS.get(category, category)

@@ -1,8 +1,10 @@
 from auditor.demo_data import live_demo_script
+from auditor.elevenlabs import stt_enabled, tts_enabled
 from auditor.state import (
     format_timestamp,
     high_risk_count,
     ingest_audio,
+    ingest_clip_if_new,
     ingest_text_turn,
     init_state,
     reset_live_session,
@@ -55,8 +57,11 @@ def render_session_duration(seconds: float, running: bool) -> None:
         height=72,
     )
 
+
 st.title("Live Interrogation Monitor")
-st.caption("Real-time custodial oversight and coercive technique detection.")
+st.caption(
+    "Two labeled microphones, speech-to-text, and high-risk tagging on each finalized turn."
+)
 
 m1, m2 = st.columns(2)
 with m1:
@@ -72,6 +77,11 @@ panel, body = st.columns([0.28, 0.72], gap="large")
 with panel:
     with st.container(border=True):
         st.subheader("Control panel")
+        if stt_enabled():
+            st.caption("Speech-to-text: ElevenLabs Scribe")
+        else:
+            st.caption("Speech-to-text: mock mode (no ElevenLabs key)")
+
         if session["is_streaming"]:
             if st.button("Stop Stream", type="primary", width="stretch"):
                 stop_stream()
@@ -81,7 +91,33 @@ with panel:
             if st.button("Start Live Audio Stream", type="primary", width="stretch"):
                 start_stream()
                 st.rerun()
-            st.caption("ElevenLabs STT will attach to this toggle.")
+            st.caption("Start the stream, then record from each microphone.")
+
+        st.divider()
+        st.markdown("**Two-device audio**")
+        st.caption(
+            "Record the officer and the suspect separately. The browser uses your "
+            "default mic unless the OS or permission prompt lets you pick another device."
+        )
+        streaming = bool(session["is_streaming"])
+        officer_clip = st.audio_input(
+            "Officer microphone",
+            key="officer_mic",
+            disabled=not streaming,
+        )
+        suspect_clip = st.audio_input(
+            "Suspect microphone",
+            key="suspect_mic",
+            disabled=not streaming,
+        )
+        try:
+            officer_new = ingest_clip_if_new(officer_clip, "officer")
+            suspect_new = ingest_clip_if_new(suspect_clip, "suspect")
+        except RuntimeError as exc:
+            st.error(str(exc))
+        else:
+            if officer_new or suspect_new:
+                st.rerun()
 
         st.divider()
         if st.button(
@@ -96,17 +132,30 @@ with panel:
             st.session_state.demo_cursor += 1
             ingest_text_turn(piece["speaker"], piece["text"])
             st.rerun()
-        st.caption("Stand-in for finalized ElevenLabs speech-to-text turns.")
+        st.caption("Scripted turns for demos without a microphone.")
 
         st.divider()
         uploaded = st.file_uploader(
             "Upload sample audio",
-            type=["wav", "mp3"],
-            help="Demonstration upload. Later this file is sent to ElevenLabs STT.",
+            type=["wav", "mp3", "webm", "m4a"],
+            help="Sent to ElevenLabs STT when AUDIO_PROVIDER_MODE=elevenlabs.",
+        )
+        upload_speaker = st.selectbox(
+            "Speaker for uploaded audio",
+            ["officer", "suspect", "unknown"],
         )
         if uploaded is not None and st.button("Transcribe uploaded audio", width="stretch"):
-            ingest_audio(uploaded.name, uploaded.getvalue())
-            st.rerun()
+            try:
+                ingest_audio(
+                    uploaded.name,
+                    uploaded.getvalue(),
+                    speaker=upload_speaker,
+                    content_type=uploaded.type,
+                )
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                st.rerun()
 
         st.divider()
         speaker = st.selectbox("Speaker tag for manual turn", ["officer", "suspect", "unknown"])
@@ -131,7 +180,7 @@ with body:
             st.subheader("Live timestamped transcript")
             feed = st.container(height=560)
             if not session["turns"]:
-                feed.info("Start the stream, play demo turns, or upload audio.")
+                feed.info("Start the stream, then record from each mic or play a demo turn.")
             else:
                 for turn in reversed(session["turns"]):
                     risk = turn.get("risk_level") or "none"
@@ -159,7 +208,7 @@ with body:
                     <div class="alert-normal">
                       <strong>Status: Monitoring (Normal)</strong>
                       <p>No high-risk coercive technique is currently flagged.
-                      Nemotron analysis runs on each finalized turn.</p>
+                      Analysis runs on each finalized turn.</p>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -180,9 +229,12 @@ with body:
 
             spoken = st.session_state.last_spoken_alert
             if spoken:
-                st.caption("Audio safeguard prompt (ElevenLabs TTS stub)")
+                st.caption(
+                    "Audio safeguard prompt"
+                    + (" (ElevenLabs TTS)" if tts_enabled() else " (text only until TTS is configured)")
+                )
                 st.write(spoken["alert_text"])
                 if spoken.get("audio_bytes"):
                     st.audio(spoken["audio_bytes"])
                 else:
-                    st.info("Spoken alert queued. Connect ElevenLabs TTS to play this line aloud.")
+                    st.info("Spoken alert queued. Set ELEVENLABS_VOICE_ID to play this line aloud.")
