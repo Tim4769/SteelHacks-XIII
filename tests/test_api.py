@@ -8,6 +8,7 @@ client = TestClient(app)
 def test_home_exposes_continuous_capture_controls():
     response = client.get("/")
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, max-age=0"
     assert "Start live session" in response.text
     assert "Finalize turn now" in response.text
     assert "suspectDeviceSelect" in response.text
@@ -35,7 +36,7 @@ def test_live_monitor_exposes_dominant_microphone_filtering():
     assert 'id="suspectMicCard"' in response.text
     assert 'id="officerMicCard"' in response.text
     assert "Louder-microphone filtering is on" in response.text
-    assert "only the louder channel is transcribed" in response.text
+    assert "Only the louder channel is transcribed" in response.text
 
 
 def test_health_reports_mock_modes():

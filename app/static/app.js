@@ -7,6 +7,8 @@ const VAD = Object.freeze({
   idleRotationMs: 20000,
   alertRecoveryMs: 450,
   sampleEveryMs: 50,
+  dominanceSwitchRatio: 1.35,
+  dominanceSwitchHoldMs: 250,
 });
 
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -44,6 +46,8 @@ const state = {
   audioContext: null,
   vadHandle: null,
   activeSpeakerRole: null,
+  challengerRole: null,
+  challengerStartedAt: null,
   liveSession: false,
   captureSuppressed: false,
   timerHandle: null,
@@ -87,6 +91,8 @@ function setIndicator(mode) {
 
 function setDominantMicrophone(role = null) {
   state.activeSpeakerRole = role;
+  state.challengerRole = null;
+  state.challengerStartedAt = null;
   el.suspectMicCard.classList.toggle("dominant", role === "suspect");
   el.officerMicCard.classList.toggle("dominant", role === "officer");
 }
@@ -294,8 +300,29 @@ function sampleVoiceActivity() {
   }
 
   const activeCapture = state.captures[state.activeSpeakerRole];
+  if (shouldSwitchDominantMicrophone(activeCapture, captures, now)) return;
   sampleDominantTurn(activeCapture, now);
   captures.filter((capture) => capture !== activeCapture).forEach((capture) => rotateIdleSegment(capture, now));
+}
+
+function shouldSwitchDominantMicrophone(activeCapture, captures, now) {
+  const challenger = captures.find((capture) => capture !== activeCapture);
+  const clearlyLouder = challenger
+    && challenger.lastVolume >= VAD.speechThreshold
+    && challenger.lastVolume >= activeCapture.lastVolume * VAD.dominanceSwitchRatio;
+  if (!clearlyLouder) {
+    state.challengerRole = null;
+    state.challengerStartedAt = null;
+    return false;
+  }
+  if (state.challengerRole !== challenger.role) {
+    state.challengerRole = challenger.role;
+    state.challengerStartedAt = now;
+    return false;
+  }
+  if (now - state.challengerStartedAt < VAD.dominanceSwitchHoldMs) return false;
+  finalizeCurrentTurn(activeCapture, `${capitalize(challenger.role)} microphone became louder`);
+  return true;
 }
 
 function beginDominantTurn(capture, now) {

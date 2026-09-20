@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -25,7 +25,6 @@ from .providers import (
     transcribe_audio,
 )
 
-
 app = FastAPI(
     title="SteelHacks Interrogation-Risk Voice Prototype",
     version="0.1.0",
@@ -43,6 +42,14 @@ SUPPORTED_AUDIO_TYPES = {
 _transcript_cache: dict[str, tuple[str, TranscriptResponse]] = {}
 _synthesis_cache: dict[str, tuple[str, AudioResult]] = {}
 _analysis_locks: dict[str, asyncio.Lock] = {}
+
+
+@app.middleware("http")
+async def prevent_stale_interface_assets(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css"}:
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 def _error(status: int, provider_error: ProviderError) -> HTTPException:
@@ -223,4 +230,3 @@ async def synthesize(request: SynthesisRequest) -> Response:
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
-
