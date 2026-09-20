@@ -29,6 +29,15 @@ def test_home_exposes_navigation_and_archive_controls():
     assert 'id="saveSessionDialog"' in response.text
 
 
+def test_live_monitor_exposes_dominant_microphone_filtering():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="suspectMicCard"' in response.text
+    assert 'id="officerMicCard"' in response.text
+    assert "Louder-microphone filtering is on" in response.text
+    assert "only the louder channel is transcribed" in response.text
+
+
 def test_health_reports_mock_modes():
     response = client.get("/api/health")
     assert response.status_code == 200

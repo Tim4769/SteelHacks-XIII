@@ -21,6 +21,7 @@ function emptyCapture(role, meterId) {
     audioSource: null,
     analyser: null,
     waveform: null,
+    lastVolume: 0,
     speechActive: false,
     speechStartedAt: null,
     speechLoudMs: 0,
@@ -42,12 +43,9 @@ const state = {
   },
   audioContext: null,
   vadHandle: null,
+  activeSpeakerRole: null,
   liveSession: false,
   captureSuppressed: false,
-  speechActive: false,
-  speechStartedAt: null,
-  speechLoudMs: 0,
-  silenceStartedAt: null,
   timerHandle: null,
   activeAbortController: null,
   activeAudio: null,
@@ -61,7 +59,7 @@ const el = Object.fromEntries(
   [
     "resetButton", "stateLabel", "providerLabel", "securityWarning",
     "speakerSelect", "suspectDeviceSelect", "officerDeviceSelect", "refreshDevicesButton",
-    "deviceStatus", "recordButton", "stopButton", "cancelButton",
+    "deviceStatus", "suspectMicCard", "officerMicCard", "recordButton", "stopButton", "cancelButton",
     "recordingIndicator", "recordingText", "timer", "suspectMeterFill", "officerMeterFill",
     "textFallback", "analyzeTextButton", "sessionId", "turnList",
     "analysisSummary", "analysisMetadata", "errorPanel", "concernList", "stopAudioButton",
@@ -85,6 +83,12 @@ function setUiState(label) {
 function setIndicator(mode) {
   el.recordingIndicator.classList.remove("live", "listening", "paused");
   if (mode) el.recordingIndicator.classList.add(mode);
+}
+
+function setDominantMicrophone(role = null) {
+  state.activeSpeakerRole = role;
+  el.suspectMicCard.classList.toggle("dominant", role === "suspect");
+  el.officerMicCard.classList.toggle("dominant", role === "officer");
 }
 
 function renderControls() {
@@ -119,6 +123,7 @@ function resetVadState(capture) {
   capture.speechStartedAt = null;
   capture.speechLoudMs = 0;
   capture.silenceStartedAt = null;
+  capture.lastVolume = 0;
   el[capture.meterId].style.width = "0%";
 }
 
@@ -162,6 +167,7 @@ function stopLiveSession({ label = "Stopped", preserveAudio = false } = {}) {
   state.timerHandle = null;
   if (!preserveAudio) stopCurrentAudio();
   Object.values(state.captures).forEach(resetVadState);
+  setDominantMicrophone();
   setIndicator(null);
   el.recordingText.textContent = "Ready to start";
   el.timer.textContent = "00:00";
@@ -269,60 +275,71 @@ function capitalize(value) {
 
 function sampleVoiceActivity() {
   if (!state.liveSession || state.captureSuppressed) return;
-  Object.values(state.captures).forEach(sampleCaptureVoiceActivity);
-}
-
-function sampleCaptureVoiceActivity(capture) {
-  if (!capture.analyser) return;
-  capture.analyser.getFloatTimeDomainData(capture.waveform);
-  const volume = rootMeanSquare(capture.waveform);
-  el[capture.meterId].style.width = `${Math.min(100, Math.round(volume * 900))}%`;
   const now = Date.now();
-  const segmentAge = capture.currentSegment ? now - capture.currentSegment.startedAt : 0;
+  const captures = Object.values(state.captures);
+  captures.forEach((capture) => {
+    if (!capture.analyser) return;
+    capture.analyser.getFloatTimeDomainData(capture.waveform);
+    capture.lastVolume = rootMeanSquare(capture.waveform);
+    el[capture.meterId].style.width = `${Math.min(100, Math.round(capture.lastVolume * 900))}%`;
+  });
 
-  if (!capture.speechActive && volume >= VAD.speechThreshold) {
-    capture.speechActive = true;
-    capture.speechStartedAt = now;
-    capture.speechLoudMs = VAD.sampleEveryMs;
-    capture.silenceStartedAt = null;
-    if (capture.currentSegment) {
-      capture.currentSegment.timestampMs = now - state.sessionStartedAt;
-    }
-    setIndicator("live");
-    el.recordingText.textContent = `${capitalize(capture.role)} speech detected`;
-    setUiState(`Listening / ${capture.role} speech detected`);
+  if (!state.activeSpeakerRole) {
+    const dominant = captures.reduce((louder, capture) => (
+      capture.lastVolume > louder.lastVolume ? capture : louder
+    ));
+    if (dominant.lastVolume >= VAD.speechThreshold) beginDominantTurn(dominant, now);
+    captures.forEach((capture) => rotateIdleSegment(capture, now));
     return;
   }
 
-  if (capture.speechActive) {
-    if (volume > VAD.silenceThreshold) {
-      capture.speechLoudMs += VAD.sampleEveryMs;
+  const activeCapture = state.captures[state.activeSpeakerRole];
+  sampleDominantTurn(activeCapture, now);
+  captures.filter((capture) => capture !== activeCapture).forEach((capture) => rotateIdleSegment(capture, now));
+}
+
+function beginDominantTurn(capture, now) {
+  setDominantMicrophone(capture.role);
+  capture.speechActive = true;
+  capture.speechStartedAt = now;
+  capture.speechLoudMs = VAD.sampleEveryMs;
+  capture.silenceStartedAt = null;
+  if (capture.currentSegment) capture.currentSegment.timestampMs = now - state.sessionStartedAt;
+  setIndicator("live");
+  el.recordingText.textContent = `${capitalize(capture.role)} microphone is louder — transcribing only this channel`;
+  setUiState(`Dominant microphone: ${capture.role}`);
+}
+
+function sampleDominantTurn(capture, now) {
+  const segmentAge = capture.currentSegment ? now - capture.currentSegment.startedAt : 0;
+
+  if (capture.lastVolume > VAD.silenceThreshold) {
+    capture.speechLoudMs += VAD.sampleEveryMs;
+    capture.silenceStartedAt = null;
+  } else {
+    capture.silenceStartedAt ??= now;
+    const silenceMs = now - capture.silenceStartedAt;
+    if (
+      silenceMs >= VAD.endOfTurnSilenceMs
+      && capture.speechLoudMs >= VAD.minimumSpeechMs
+    ) {
+      finalizeCurrentTurn(capture, "Pause detected");
+      return;
     }
-    if (volume <= VAD.silenceThreshold) {
-      capture.silenceStartedAt ??= now;
-      const silenceMs = now - capture.silenceStartedAt;
-      if (
-        silenceMs >= VAD.endOfTurnSilenceMs
-        && capture.speechLoudMs >= VAD.minimumSpeechMs
-      ) {
-        finalizeCurrentTurn(capture, "Pause detected");
-        return;
-      }
-    } else {
-      capture.silenceStartedAt = null;
-    }
-    if (segmentAge >= VAD.maximumSegmentMs) {
-      finalizeCurrentTurn(capture, "Maximum turn length reached");
-    }
-  } else if (segmentAge >= VAD.idleRotationMs) {
-    stopCurrentSegment(capture, "discard");
   }
+  if (segmentAge >= VAD.maximumSegmentMs) finalizeCurrentTurn(capture, "Maximum turn length reached");
+}
+
+function rotateIdleSegment(capture, now) {
+  if (capture.speechActive || !capture.currentSegment) return;
+  if (now - capture.currentSegment.startedAt >= VAD.idleRotationMs) stopCurrentSegment(capture, "discard");
 }
 
 function finalizeCurrentTurn(capture, reason = "Turn finalized", force = false) {
   if (!state.liveSession || state.captureSuppressed || !capture.currentSegment) return;
   const hadSpeech = capture.speechActive;
   resetVadState(capture);
+  if (state.activeSpeakerRole === capture.role) setDominantMicrophone();
   if (!hadSpeech && !force) {
     el.recordingText.textContent = "Listening for speech";
     return;
@@ -331,6 +348,9 @@ function finalizeCurrentTurn(capture, reason = "Turn finalized", force = false) 
   el.recordingText.textContent = `${reason}; continuing to listen`;
   setUiState("Turn queued for transcription");
   stopCurrentSegment(capture, "finalize");
+  Object.values(state.captures)
+    .filter((otherCapture) => otherCapture !== capture)
+    .forEach((otherCapture) => stopCurrentSegment(otherCapture, "discard"));
 }
 
 function audioConstraints(deviceId) {
@@ -338,7 +358,7 @@ function audioConstraints(deviceId) {
     deviceId: { exact: deviceId },
     echoCancellation: true,
     noiseSuppression: true,
-    autoGainControl: true,
+    autoGainControl: false,
     channelCount: 1,
   };
 }
@@ -467,6 +487,7 @@ async function startLiveSession() {
     state.liveSession = true;
     state.captureSuppressed = false;
     Object.values(state.captures).forEach(resetVadState);
+    setDominantMicrophone();
     setupAudioAnalysis();
     await state.audioContext.resume();
     Object.values(state.captures).forEach(createSegmentRecorder);
@@ -663,6 +684,7 @@ function suspendCaptureForAlert() {
     resetVadState(capture);
     stopCurrentSegment(capture, "discard");
   });
+  setDominantMicrophone();
   setIndicator("paused");
   el.recordingText.textContent = "Capture paused during spoken warning";
   renderControls();
@@ -676,6 +698,7 @@ async function resumeCaptureAfterAlert(sessionAtStart) {
     resetVadState(capture);
     createSegmentRecorder(capture);
   });
+  setDominantMicrophone();
   setIndicator("listening");
   el.recordingText.textContent = "Listening to Suspect and Officer";
   setUiState("Listening");
@@ -1037,7 +1060,12 @@ function downloadSelectedArchive(format) {
 el.recordButton.addEventListener("click", startLiveSession);
 el.stopButton.addEventListener("click", stopAndOfferArchive);
 el.cancelButton.addEventListener("click", () => {
-  Object.values(state.captures).forEach((capture) => finalizeCurrentTurn(capture, "Manually finalized", true));
+  const activeCapture = state.captures[state.activeSpeakerRole];
+  if (activeCapture) {
+    finalizeCurrentTurn(activeCapture, "Manually finalized", true);
+  } else {
+    el.recordingText.textContent = "No dominant speaker is active yet";
+  }
 });
 el.analyzeTextButton.addEventListener("click", analyzeTypedTurn);
 el.resetButton.addEventListener("click", resetSession);

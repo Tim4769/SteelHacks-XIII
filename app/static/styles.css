@@ -74,9 +74,12 @@ textarea { resize: vertical; }
 .microphone-heading .capture-hint { margin-top: 5px; }
 .microphone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 18px; }
 .microphone-card { border: 1px solid var(--line); background: var(--paper); border-radius: 11px; padding: 12px; min-width: 0; }
+.microphone-card.dominant { border-color: var(--green); background: #eaf8f1; box-shadow: 0 0 0 3px rgba(19,121,91,.12); }
+.microphone-card.dominant label::after { content: " • selected for this turn"; color: var(--green); font-size: .75rem; }
 .microphone-card label { margin-top: 0; }
 .microphone-card small { display: block; color: var(--muted); line-height: 1.35; }
 .microphone-card .voice-meter { margin: 10px 0 7px; }
+.dominance-note { margin: -4px 0 16px; padding: 10px 12px; color: #155c49; background: #edf9f4; border: 1px solid #b5decc; border-radius: 9px; font-size: .82rem; line-height: 1.45; }
 .recording-card { display: flex; justify-content: space-between; align-items: center; background: var(--paper); border-radius: 11px; padding: 16px; margin: 18px 0 12px; }
 .recording-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9aa7b5; margin-right: 8px; }
 .recording-indicator.live { background: var(--red); animation: pulse 1.1s infinite; }

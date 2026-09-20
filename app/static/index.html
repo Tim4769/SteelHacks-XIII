@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Interrogation Review Workspace</title>
-    <link rel="stylesheet" href="/styles.css?v=archives-2" />
+    <link rel="stylesheet" href="/styles.css?v=dominant-mic-1" />
   </head>
   <body>
     <button id="navToggle" class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
@@ -54,11 +54,12 @@
               <h2>1. Live capture</h2>
               <div class="microphone-heading"><div><strong>Two-microphone setup</strong><p id="deviceStatus" class="capture-hint">Choose which physical microphone belongs to each person.</p></div><button id="refreshDevicesButton" class="secondary" type="button">Find microphones</button></div>
               <div class="microphone-grid">
-                <div class="microphone-card"><label for="suspectDeviceSelect">Suspect microphone</label><select id="suspectDeviceSelect" aria-describedby="suspectMeterLabel"></select><div class="voice-meter" aria-label="Suspect microphone activity"><span id="suspectMeterFill"></span></div><small id="suspectMeterLabel">Channel is always labeled Suspect.</small></div>
-                <div class="microphone-card"><label for="officerDeviceSelect">Officer microphone</label><select id="officerDeviceSelect" aria-describedby="officerMeterLabel"></select><div class="voice-meter" aria-label="Officer microphone activity"><span id="officerMeterFill"></span></div><small id="officerMeterLabel">Channel is always labeled Officer.</small></div>
+                <div id="suspectMicCard" class="microphone-card"><label for="suspectDeviceSelect">Suspect microphone</label><select id="suspectDeviceSelect" aria-describedby="suspectMeterLabel"></select><div class="voice-meter" aria-label="Suspect microphone activity"><span id="suspectMeterFill"></span></div><small id="suspectMeterLabel">Channel is always labeled Suspect.</small></div>
+                <div id="officerMicCard" class="microphone-card"><label for="officerDeviceSelect">Officer microphone</label><select id="officerDeviceSelect" aria-describedby="officerMeterLabel"></select><div class="voice-meter" aria-label="Officer microphone activity"><span id="officerMeterFill"></span></div><small id="officerMeterLabel">Channel is always labeled Officer.</small></div>
               </div>
+              <p class="dominance-note"><strong>Louder-microphone filtering is on.</strong> When both microphones hear the same voice, only the louder channel is transcribed. That channel stays selected until the speaker pauses.</p>
               <div class="recording-card"><div><span id="recordingIndicator" class="recording-indicator"></span><span id="recordingText">Ready to start</span></div><strong id="timer">00:00</strong></div>
-              <p class="capture-hint">Either person may speak. Each microphone finalizes its own turn after about 1.3 seconds of silence. Capture pauses while a warning is spoken.</p>
+              <p class="capture-hint">Either person may speak. The selected microphone finalizes its turn after about 1.3 seconds of silence. Capture pauses while a warning is spoken.</p>
               <div class="button-row"><button id="recordButton" class="primary">Start live session</button><button id="stopButton" class="danger" disabled>Stop live session</button><button id="cancelButton" class="secondary" disabled>Finalize turn now</button></div>
               <details>
                 <summary>Typed transcript fallback</summary>
@@ -100,6 +101,6 @@
       <form method="dialog"><p class="eyebrow">ARCHIVE LIVE SESSION</p><h2>Name this interrogation session</h2><p>The transcript, detected concerns, and alert timeline will be saved in this browser.</p><label for="sessionNameInput">Session name</label><input id="sessionNameInput" type="text" maxlength="120" placeholder="Session #1 – Interview name" required /><p id="saveSessionError" class="field-error hidden">Enter a session name before saving.</p><div class="dialog-actions"><button id="dontSaveSessionButton" class="secondary" type="button">Don't Save</button><button id="saveSessionButton" class="primary" type="button">Save</button></div></form>
     </dialog>
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=archives-1" defer></script>
+    <script src="/app.js?v=dominant-mic-1" defer></script>
   </body>
 </html>
