@@ -91,14 +91,12 @@ one warning card, and one new `alert_text` handed to Person 1.
 
 ## Handling hosted-endpoint failures
 
-If analysis returns `MODEL_TIMEOUT`:
+If analysis reports a timeout through `technical_warning`:
 
-1. Keep the transcript visible and show the technical error state.
-2. Do not show a no-concern result and do not play alert audio.
-3. Offer one user-initiated retry using the identical request ID and payload.
-4. If the retry also fails, explain that NVIDIA’s hosted endpoint is temporarily unavailable and
-   continue the presentation with the already verified architecture and mocked deterministic tests.
+1. Keep the transcript and deterministic classification visible.
+2. Show `detection_source: local_fallback` and the sanitized warning.
+3. Offer a user-initiated retry with a new request ID and the same dialogue.
 
-Do not fabricate a successful response. Do not label local heuristic output as Nemotron output.
-`UPSTREAM_UNAVAILABLE` is handled the same way, while configuration and invalid-input errors should
-be corrected rather than retried.
+Do not label local fallback output as Nemotron output. Upstream, configuration, and invalid-model
+output failures use the same conservative fallback for valid input. Invalid request data and
+request-ID conflicts remain errors and must be corrected.

@@ -1,0 +1,15 @@
+[
+  {"turn_id":"c1","speaker":"suspect","text":"I want to speak to my lawyer. I don’t want to answer any more questions.","timestamp_ms":0},
+  {"turn_id":"c2","speaker":"officer","text":"We’ll deal with that later. First, explain those marks on your hands. Did you hurt Donald?","timestamp_ms":1000},
+  {"turn_id":"c3","speaker":"suspect","text":"I already told you. I want a lawyer.","timestamp_ms":2000},
+  {"turn_id":"c4","speaker":"officer","text":"This is your opportunity to help yourself. Cooperate with me, and I can try to make things easier for you.","timestamp_ms":3000},
+  {"turn_id":"c5","speaker":"suspect","text":"I don’t want to keep talking without a lawyer.","timestamp_ms":4000},
+  {"turn_id":"c6","speaker":"officer","text":"If you won’t cooperate, you could face the most serious charges. Tell me what happened.","timestamp_ms":5000},
+  {"turn_id":"c7","speaker":"suspect","text":"Why do you keep asking? I said I want a lawyer.","timestamp_ms":6000},
+  {"turn_id":"c8","speaker":"officer","text":"Donald was your friend. You cared about him. Help me understand what happened.","timestamp_ms":7000},
+  {"turn_id":"c9","speaker":"narrator","text":"The first interview ends without a confession. Neal is held overnight without access to a lawyer, food, or water. The following morning, he asks to speak with the detective again.","timestamp_ms":8000},
+  {"turn_id":"c10","speaker":"officer","text":"You wanted to talk to me. What do you want to tell me?","timestamp_ms":9000},
+  {"turn_id":"c11","speaker":"suspect","text":"I want to tell you what happened. I killed Donald.","timestamp_ms":10000},
+  {"turn_id":"c12","speaker":"officer","text":"Tell me what happened between you.","timestamp_ms":11000},
+  {"turn_id":"c13","speaker":"suspect","text":"We had argued earlier. I got angry, and I killed him.","timestamp_ms":12000}
+]

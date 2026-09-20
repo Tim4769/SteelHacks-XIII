@@ -27,13 +27,13 @@ NVIDIA_MODEL=
 Do not place any of these values in Streamlit browser code. The module loads local values at the
 model-client boundary and sends the API key only in the server-side NVIDIA authorization header.
 
-The NVIDIA request disables thinking with
-`chat_template_kwargs.enable_thinking=false`, uses temperature `0`, limits output to 256 tokens,
-and does not stream. To contain intermittent hosted-endpoint stalls, one logical model call may make
-one initial attempt with a 12-second read timeout and at most one retry with a 15-second read
-timeout. A successful response is never retried, and authentication, invalid-request,
-configuration, and other non-transient failures are not retried. If both transient attempts time
-out, analysis returns `MODEL_TIMEOUT`; it never returns a no-concern result for a technical failure.
+The analyzer is local-first. High-confidence configured concerns and obvious no-concern statements
+return immediately with `detection_source: "local"` and do not call NVIDIA. Ambiguous statements
+make one NVIDIA request with a 1-second connection timeout and 2-second read timeout. The request
+disables thinking with `chat_template_kwargs.enable_thinking=false`, uses temperature `0`, limits
+output to 256 tokens, and does not stream. There is no automatic retry or repair call. Model
+failures return the conservative local classification with `detection_source: "local_fallback"`
+and a sanitized `technical_warning`.
 
 ## Entry point
 
@@ -82,9 +82,16 @@ import Streamlit and can later be wrapped by `POST /api/analyze` without rewriti
 }
 ```
 
-Allowed speakers are `officer`, `suspect`, and `unknown`. `new_turns` must contain at least one
-turn. IDs and text must be nonblank, sequence numbers and timestamps must be nonnegative, and turn
-IDs must be unique across both arrays. The direct-call request size limit is 256 KB.
+Allowed speakers are `officer`, `suspect`, `narrator`, `witness`, and `unknown`. `new_turns` must
+contain at least one turn. IDs and text must be nonblank, sequence numbers and timestamps must be
+nonnegative, and turn IDs must be unique across both arrays. The direct-call request size limit is
+256 KB.
+
+Only a submitted `speaker: "officer"` turn can be primary evidence for an officer-conduct
+concern. Suspect, narrator, witness, and unknown turns provide context only. Evidence quote,
+offsets, turn ID, speaker, and timestamp are all reconstructed from the same submitted officer
+turn; model-provided speaker metadata is neither requested nor trusted. A non-officer evidence
+candidate invalidates that model result and cannot produce a card or audio alert.
 
 ## Response example
 
@@ -113,14 +120,18 @@ IDs must be unique across both arrays. The direct-call request size limit is 256
       "alert_text": "Potential inducement detected. Review the promise of release."
     }
   ],
-  "error": null
+  "error": null,
+  "detection_source": "hybrid",
+  "technical_warning": null
 }
 ```
 
-The module supports only `benefit_conditioned_on_confession` and
-`threat_conditioned_on_confession`. Technical failures return `status: "error"`; they are never
-reported as `no_concern_detected`. Stable error codes are `INVALID_INPUT`, `INPUT_CONFLICT`,
-`MODEL_TIMEOUT`, `MODEL_OUTPUT_INVALID`, `UPSTREAM_UNAVAILABLE`, and `CONFIGURATION_ERROR`.
+Supported categories are `benefit_conditioned_on_confession`,
+`threat_conditioned_on_confession`, `third_party_threat_conditioned_on_confession`,
+`deprivation_conditioned_on_confession`, `evidence_claim_used_as_pressure`,
+`minimization_used_to_elicit_admission`, and `questioning_after_counsel_request`. The detection
+source is `local`, `nemotron`, `hybrid`, or `local_fallback`. Invalid input and request conflicts
+still return `status: "error"`.
 
 ## Person 3 adapter
 
@@ -135,6 +146,22 @@ state. Person 3 should:
 4. Deduplicate warning cards and spoken alerts using `concern_id`.
 5. Highlight the backend-derived evidence offsets, display the qualified explanation, and send only
    previously unplayed `alert_text` values to Person 1.
+6. Preserve the actual speaker on every transcript turn. Do not infer or rewrite roles while
+   constructing `context_turns` or `new_turns`.
+
+An explicit suspect request for a lawyer activates process-local counsel-request context for that
+session. Later substantive officer questioning is flagged with
+`questioning_after_counsel_request`; the suspect request remains context and is never used as
+primary evidence. An officer statement that clearly stops questioning or arranges counsel clears
+the state. A documented suspect-initiated later interaction is treated conservatively under this
+prototype policy and does not produce a definitive waiver or admissibility conclusion. Person 3
+should continue sending sufficient context because process-local state does not survive a restart.
+Call `DialogueAnalyzer.reset_session(session_id)` when explicitly resetting a session, or use a new
+session ID with the module-level analyzer.
+
+If an officer-labeled new turn strongly resembles a first-person request for counsel, the analyzer
+returns the sanitized warning `SPEAKER_ATTRIBUTION_SUSPECTED`. It does not guess a replacement role;
+Person 3 must correct the source transcript label.
 
 Person 3’s current branch uses `benefit_for_confession` and `threat_for_confession`. Those names
 must be migrated to `benefit_conditioned_on_confession` and
@@ -198,16 +225,18 @@ elif result.status == "insufficient_context":
     st.session_state.accepted_analysis_sequence = decision.latest_sequence_number
     st.info("More finalized dialogue is needed before analysis can complete.")
 elif result.status == "error":
-    # Never send alert audio after a technical error.
-    st.error(result.error.message if result.error else "Analysis failed.")
-    if result.error and result.error.code in {"MODEL_TIMEOUT", "UPSTREAM_UNAVAILABLE"}:
-        if st.button("Retry analysis"):
-            st.rerun()  # Reuse the same payload/request_id for an identical retry.
+    st.error(result.error.message if result.error else "The request was invalid.")
+
+if result.technical_warning:
+    st.warning(result.technical_warning)
+    if st.button("Retry Nemotron"):
+        st.rerun()
 ```
 
 Before calling `analyze_dialogue`, reduce each turn to the contract fields `turn_id`, `speaker`,
-`text`, and `timestamp_ms`; do not pass Streamlit-only display fields. Preserve the same request ID
-and body for an identical retry. A changed body requires a new request ID.
+`text`, and `timestamp_ms`; do not pass Streamlit-only display fields. A user-requested Nemotron
+retry must use a new request ID with the same dialogue so it is not served from the idempotency
+cache. A changed body also requires a new request ID.
 
 ## Validation commands
 
@@ -225,11 +254,15 @@ validation.
 
 ## Known limitations
 
-- The retry and turn-conflict cache is bounded and process-local. It does not survive restarts and is
-  not shared between application instances; analysis correctness does not depend on it.
+- The response and turn-conflict caches are bounded and process-local. Response keys include the
+  normalized text, speaker, taxonomy version, classifier version, and corpus version. Technical
+  fallbacks are not cached.
 - This version has no HTTP wrapper and no cross-process request-size enforcement.
-- Only the benefit and threat categories are supported. Counsel-request analysis is deferred.
+- Counsel-request state is a conservative prototype policy. It does not decide waiver,
+  reinitiation, admissibility, or any legal conclusion.
+- Local matching is intentionally conservative and can miss nuanced tactics that Nemotron would
+  detect. Always display the detection source and any technical warning.
 - Speaker labels and finalized transcript accuracy remain Person 3 and Person 1 responsibilities.
 - Model classification remains probabilistic even though schema and evidence checks are deterministic.
-- The hosted NVIDIA trial endpoint has shown intermittent stalls even with thinking disabled. The
-  bounded retry strategy caps a logical model call near 28 seconds, but cannot guarantee demo latency.
+- The hosted NVIDIA endpoint may still be unavailable, but an ambiguous remote request has one
+  bounded attempt and falls back locally after its 1-second connect/2-second read limits.
