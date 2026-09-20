@@ -57,20 +57,12 @@ def test_success_within_first_window_and_no_retry() -> None:
     assert body["temperature"] == 0.0
     assert "top_p" not in body
     assert body["stream"] is False
-    assert call["timeout"] == (5.0, 12.0)
+    assert call["timeout"] == (1.0, 2.0)
     assert len(session.calls) == 1
 
 
-def test_first_timeout_then_successful_retry() -> None:
+def test_timeout_is_not_retried() -> None:
     session = RecordingSession(["timeout", "success"])
-    client = NvidiaNemotronClient(settings(), session=session)  # type: ignore[arg-type]
-    result = client.complete([{"role": "user", "content": "Synthetic test"}])
-    assert result == '{"status":"ok"}'
-    assert [call["timeout"] for call in session.calls] == [(5.0, 12.0), (5.0, 15.0)]
-
-
-def test_both_attempts_timing_out_raises_model_timeout() -> None:
-    session = RecordingSession(["timeout", "timeout"])
     client = NvidiaNemotronClient(settings(), session=session)  # type: ignore[arg-type]
     try:
         client.complete([{"role": "user", "content": "Synthetic test"}])
@@ -78,7 +70,19 @@ def test_both_attempts_timing_out_raises_model_timeout() -> None:
         pass
     else:
         raise AssertionError("Expected ModelTimeout")
-    assert len(session.calls) == 2
+    assert len(session.calls) == 1
+
+
+def test_single_attempt_timeout_raises_model_timeout() -> None:
+    session = RecordingSession(["timeout"])
+    client = NvidiaNemotronClient(settings(), session=session)  # type: ignore[arg-type]
+    try:
+        client.complete([{"role": "user", "content": "Synthetic test"}])
+    except ModelTimeout:
+        pass
+    else:
+        raise AssertionError("Expected ModelTimeout")
+    assert len(session.calls) == 1
 
 
 def test_non_retryable_upstream_error_is_not_retried() -> None:

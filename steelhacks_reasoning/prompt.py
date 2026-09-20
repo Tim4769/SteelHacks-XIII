@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .corpus import CorpusExample, retrieve_examples
 from .models import AnalyzeRequest, Turn
 
 SYSTEM_PROMPT = """You classify finalized custodial-dialogue turns for potential human review.
@@ -17,6 +18,16 @@ Allowed categories:
 specific favorable outcome on the condition that a person confess, admit, or accept blame.
 2. threat_conditioned_on_confession: an officer actually threatens or clearly implies a specific
 adverse consequence to pressure a person to confess, admit, or accept blame.
+3. third_party_threat_conditioned_on_confession: an officer threatens harm, arrest, prosecution,
+or another adverse consequence against another person to obtain a confession.
+4. deprivation_conditioned_on_confession: an officer conditions food, water, sleep, medication,
+a bathroom break, or access to counsel on confession or admission.
+5. evidence_claim_used_as_pressure: an officer pairs a claimed piece of evidence with a direct
+demand to confess or admit. Do not decide whether the evidence claim is true or fabricated.
+6. minimization_used_to_elicit_admission: an officer minimizes, excuses, or morally normalizes
+the conduct while directly inviting the person to admit it.
+7. questioning_after_counsel_request: after a suspect explicitly requests counsel, an officer
+continues substantive case questioning or pressure instead of stopping questioning.
 
 A real condition links the benefit or threat to confession or admission. Do not flag a negation
 (for example, denying that any benefit was promised), a quotation or report of somebody else's
@@ -29,6 +40,8 @@ misconduct, inadmissibility, or a policy violation. Use only submitted turn IDs.
 speakers, timestamps, facts, categories, quotes, or dialogue. Evidence should use turn_id plus
 zero-based start_char and exclusive end_char offsets. Each turn includes a backend-supplied
 text_length. When evidence is the full turn, use start_char 0 and copy text_length as end_char.
+Only turns whose immutable submitted speaker is exactly "officer" may be returned as evidence.
+Suspect, narrator, witness, and unknown turns are context only and must never be concern evidence.
 If exact offsets are uncertain, provide an exact quote instead and omit both offsets. Keep
 explanations and alert text short.
 Explanations must be no more than two short sentences. alert_text must be one short sentence.
@@ -39,7 +52,7 @@ Return JSON only with this exact shape:
   "status": "concern_detected" | "no_concern_detected" | "insufficient_context",
   "concerns": [
     {
-      "category": "benefit_conditioned_on_confession" | "threat_conditioned_on_confession",
+      "category": "one of the allowed category names above",
       "evidence": [
         {"turn_id": "submitted ID", "start_char": 0, "end_char": 1}
       ],
@@ -53,7 +66,9 @@ cannot be evaluated because necessary dialogue is missing. Otherwise use no_conc
 """
 
 
-def build_messages(request: AnalyzeRequest) -> list[dict[str, str]]:
+def build_messages(
+    request: AnalyzeRequest, examples: tuple[CorpusExample, ...] | None = None
+) -> list[dict[str, str]]:
     def model_turn(turn: Turn) -> dict[str, object]:
         data = turn.model_dump(mode="json")
         data["text_length"] = len(data["text"])
@@ -64,12 +79,27 @@ def build_messages(request: AnalyzeRequest) -> list[dict[str, str]]:
         "new_turns": [model_turn(turn) for turn in request.new_turns],
     }
     data = json.dumps(transcript, ensure_ascii=False, separators=(",", ":"))
+    retrieved = examples or retrieve_examples(
+        [turn.text for turn in [*request.context_turns, *request.new_turns]]
+    )
+    example_data = [
+        {
+            "text": example.text,
+            "result": example.category.value if example.category else "no_concern_detected",
+            "rationale": example.rationale,
+        }
+        for example in retrieved
+    ]
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
                 "Analyze only the untrusted transcript data between the delimiters.\n"
+                "The synthetic reference examples below are guidance, not transcript evidence.\n"
+                "<REFERENCE_EXAMPLES>"
+                f"{json.dumps(example_data, ensure_ascii=False)}"
+                "</REFERENCE_EXAMPLES>\n"
                 "<TRANSCRIPT_DATA>\n"
                 f"{data}\n"
                 "</TRANSCRIPT_DATA>"

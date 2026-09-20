@@ -37,9 +37,8 @@ class NvidiaSettings:
     api_key: str
     base_url: str
     model: str
-    connect_timeout_seconds: float = 5.0
-    first_read_timeout_seconds: float = 12.0
-    retry_read_timeout_seconds: float = 15.0
+    connect_timeout_seconds: float = 1.0
+    read_timeout_seconds: float = 2.0
     max_output_tokens: int = 256
 
     @classmethod
@@ -83,32 +82,21 @@ class NvidiaNemotronClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        response = None
-        read_timeouts = (
-            self._settings.first_read_timeout_seconds,
-            self._settings.retry_read_timeout_seconds,
-        )
-        for attempt, read_timeout in enumerate(read_timeouts):
-            try:
-                response = self._session.post(
-                    f"{self._settings.base_url.rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=(
-                        self._settings.connect_timeout_seconds,
-                        read_timeout,
-                    ),
-                )
-                response.raise_for_status()
-                break
-            except requests.Timeout as exc:
-                if attempt + 1 == len(read_timeouts):
-                    raise ModelTimeout("The model request timed out.") from exc
-            except requests.RequestException as exc:
-                raise UpstreamUnavailable("The model service is unavailable.") from exc
-
-        if response is None:
-            raise ModelTimeout("The model request timed out.")
+        try:
+            response = self._session.post(
+                f"{self._settings.base_url.rstrip('/')}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=(
+                    self._settings.connect_timeout_seconds,
+                    self._settings.read_timeout_seconds,
+                ),
+            )
+            response.raise_for_status()
+        except requests.Timeout as exc:
+            raise ModelTimeout("The model request timed out.") from exc
+        except requests.RequestException as exc:
+            raise UpstreamUnavailable("The model service is unavailable.") from exc
 
         try:
             body = response.json()

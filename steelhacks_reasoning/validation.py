@@ -17,6 +17,7 @@ from .models import (
     Evidence,
     ModelAnalysis,
     ModelEvidence,
+    Speaker,
     Turn,
 )
 
@@ -148,6 +149,10 @@ def _validate_evidence(item: ModelEvidence, turns: Mapping[str, Turn]) -> Eviden
     turn = turns.get(item.turn_id)
     if turn is None:
         raise ModelOutputInvalid("evidence references a nonexistent turn")
+    if turn.speaker != Speaker.OFFICER:
+        raise ModelOutputInvalid(
+            "evidence for an officer-conduct concern must reference an officer turn"
+        )
 
     text = turn.text
     if item.start_char is not None and item.end_char is not None:

@@ -14,6 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+demo = [
+  "streamlit>=1.38,<2",
+]
 dev = [
   "mypy>=1.11,<2",
   "pytest>=8.3,<9",

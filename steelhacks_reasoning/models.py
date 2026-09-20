@@ -17,6 +17,7 @@ from pydantic import (
 
 NonEmptyString = Annotated[str, Field(min_length=1, max_length=200)]
 TranscriptText = Annotated[str, Field(min_length=1, max_length=20_000)]
+TAXONOMY_VERSION = "3.0.0"
 
 
 class StrictModel(BaseModel):
@@ -26,12 +27,19 @@ class StrictModel(BaseModel):
 class Speaker(StrEnum):
     OFFICER = "officer"
     SUSPECT = "suspect"
+    NARRATOR = "narrator"
+    WITNESS = "witness"
     UNKNOWN = "unknown"
 
 
 class ConcernCategory(StrEnum):
     BENEFIT = "benefit_conditioned_on_confession"
     THREAT = "threat_conditioned_on_confession"
+    THIRD_PARTY_THREAT = "third_party_threat_conditioned_on_confession"
+    DEPRIVATION = "deprivation_conditioned_on_confession"
+    EVIDENCE_PRESSURE = "evidence_claim_used_as_pressure"
+    MINIMIZATION = "minimization_used_to_elicit_admission"
+    COUNSEL_QUESTIONING = "questioning_after_counsel_request"
 
 
 class AnalysisStatus(StrEnum):
@@ -39,6 +47,13 @@ class AnalysisStatus(StrEnum):
     NONE = "no_concern_detected"
     INSUFFICIENT = "insufficient_context"
     ERROR = "error"
+
+
+class DetectionSource(StrEnum):
+    LOCAL = "local"
+    NEMOTRON = "nemotron"
+    HYBRID = "hybrid"
+    LOCAL_FALLBACK = "local_fallback"
 
 
 class ErrorCode(StrEnum):
@@ -124,6 +139,8 @@ class AnalyzeResponse(StrictModel):
     status: AnalysisStatus
     concerns: list[Concern]
     error: AnalysisError | None
+    detection_source: DetectionSource = DetectionSource.NEMOTRON
+    technical_warning: str | None = None
 
     @model_validator(mode="after")
     def consistent_status(self) -> AnalyzeResponse:
@@ -136,6 +153,12 @@ class AnalyzeResponse(StrictModel):
             raise ValueError("concern_detected requires at least one concern")
         if self.status != AnalysisStatus.CONCERN and self.concerns:
             raise ValueError("only concern_detected may include concerns")
+        if any(
+            evidence.speaker != Speaker.OFFICER
+            for concern in self.concerns
+            for evidence in concern.evidence
+        ):
+            raise ValueError("officer-conduct concerns require officer evidence")
         return self
 
 
