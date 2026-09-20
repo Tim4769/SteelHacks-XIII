@@ -34,10 +34,7 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
 
 
-RIGHTS_REMINDER = (
-    "Rights reminder for a United States custodial interrogation: You have the right "
-    "to remain silent. Anything you say may be used against you in court."
-)
+RIGHTS_REMINDER = "Concern detected. You have the right to remain silent."
 
 
 @dataclass(frozen=True)
@@ -458,13 +455,9 @@ async def _analyze_with_team_module(request: AnalysisRequest) -> AnalysisRespons
 
 
 def _with_rights_reminder(response: AnalysisResponse) -> AnalysisResponse:
-    """Add one consistent spoken reminder to every detected concern."""
+    """Replace detailed model speech with one short, consistent warning."""
     concerns = [
-        concern
-        if RIGHTS_REMINDER in concern.alert_text
-        else concern.model_copy(
-            update={"alert_text": f"{concern.alert_text.rstrip()} {RIGHTS_REMINDER}"}
-        )
+        concern.model_copy(update={"alert_text": RIGHTS_REMINDER})
         for concern in response.concerns
     ]
     return response.model_copy(update={"concerns": concerns})

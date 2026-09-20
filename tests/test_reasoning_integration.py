@@ -38,7 +38,7 @@ def test_counsel_request_flow_uses_only_officer_followup_as_evidence():
     assert evidence.quote == "We will deal with that later. Did you hurt Donald?"
 
     spoken_response = _with_rights_reminder(response)
-    assert all(concern.alert_text.endswith(RIGHTS_REMINDER) for concern in spoken_response.concerns)
+    assert all(concern.alert_text == RIGHTS_REMINDER for concern in spoken_response.concerns)
 
 
 def test_combined_mislabeled_dialogue_is_not_called_a_confession_threat():
