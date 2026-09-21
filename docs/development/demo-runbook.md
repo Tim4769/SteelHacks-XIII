@@ -13,10 +13,11 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-Person 3 starts the integrated Streamlit application with:
+Start the standalone reasoning demonstration with:
 
 ```bash
-streamlit run Home.py
+python -m pip install -e '.[demo]'
+streamlit run demo_app.py
 ```
 
 If Streamlit needs restarting, stop it with `Ctrl-C`, then run the same command again. Streamlit

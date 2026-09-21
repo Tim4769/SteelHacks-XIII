@@ -1,126 +1,70 @@
-# SteelHacks XIII - interrogation-risk voice prototype
+# Themis
 
-This repository contains a 24-hour hackathon MVP that connects browser audio,
-ElevenLabs speech-to-text and text-to-speech, an interrogation-risk analysis
-contract, and a reference interface.
+### A voice-based assistant for reviewing interrogation dialogue
 
-The prototype does **not** make legal conclusions. Its outputs require human
-review.
+Built at **SteelHacks XIII · September 19–20, 2026**.
 
-## What works now
+Themis listens to simulated interrogation dialogue, highlights potential rights-related concerns, and gives short spoken alerts. Reviewers can follow the transcript as a session unfolds, then search saved conversations and inspect the evidence behind each alert.
 
-- One-speaker continuous browser capture with manual officer/suspect role.
-- Automatic turn finalization after about 1.3 seconds of silence.
-- Echo cancellation plus capture suppression while spoken alerts play.
-- A standardized U.S. custodial-interrogation rights reminder appended to every
-  detected-concern alert before ElevenLabs speaks it.
-- Runtime MIME selection with `MediaRecorder.isTypeSupported()`.
-- Backend-only ElevenLabs Scribe v2 and Flash v2.5 adapters.
-- Session-based Nemotron request and structured concern response contracts.
-- Exact-evidence, session, speaker, and concern-ID validation.
-- Mock STT, mock risk analysis, and mock audio chime for a no-key demo.
-- Warning audio only for new `concern_id` values.
-- Distinct no-concern, insufficient-context, analysis-failure, and TTS-failure states.
-- Reset protection, late-response ignoring, idempotent turn retries, and text fallback.
+**[View the presentation](docs/presentation/Themis-Final-Presentation.pdf)** · **[Download the PowerPoint](docs/presentation/Themis-Final-Presentation.pptx)** · **[Explore the project materials](docs/README.md)** · **[Run the demo](docs/development/running-locally.md)**
 
-## Quick start in mock mode
+![Themis session review showing a synthetic transcript and evidence-linked concern](docs/assets/session-review.png)
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-cp .env.example .env
-uvicorn app.main:app --reload --env-file .env
+*The working browser interface, shown with synthetic dialogue in mock mode.*
+
+## What we built
+
+- **Live conversation capture.** Two microphone channels are assigned to officer and suspect roles. The louder channel is transcribed, and pauses finalize each turn.
+- **Evidence-linked alerts.** Potential concerns include pressure to confess, threats, and continued questioning after a request for counsel. Results pair explanations with quotes from the transcript.
+- **Spoken warnings.** ElevenLabs produces short alerts for newly detected concerns; text remains available when audio fails.
+- **Session review.** Save a session in the browser, search its transcript, filter to concern lines, and export the review record as JSON or CSV.
+
+![Themis live monitor with a synthetic concern and supporting transcript](docs/assets/live-monitor.png)
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Browser microphone capture] --> B[ElevenLabs Scribe v2]
+    B --> C[Transcript and speaker roles]
+    C --> D[Local rules and NVIDIA Nemotron]
+    D --> E[Validated concerns and supporting quotes]
+    E --> F[On-screen review]
+    E --> G[ElevenLabs Flash v2.5 spoken alert]
+    F --> H[Session archive and JSON / CSV export]
 ```
 
-Open <http://127.0.0.1:8000>. Localhost is a secure browser context for
-microphone access.
+The Python backend connects speech services and analysis to a browser interface built with HTML, CSS, and JavaScript. The reasoning module uses local rules for clear cases and NVIDIA Nemotron for ambiguous input, then checks supporting quotes and speaker references against the submitted transcript. The no-key demo uses mock providers.
 
-Click **Start live session** once, speak naturally, and pause when a turn is
-complete. The browser automatically closes the segment, transcribes and
-analyzes it, then continues listening. **Finalize turn now** is available for
-noisy rooms. **Stop live session** ends continuous capture.
+| Component | Technology |
+| --- | --- |
+| Audio input and output | ElevenLabs Scribe v2 and Flash v2.5 |
+| Reasoning | NVIDIA Nemotron 3.5 Lightning, local classification, Pydantic validation |
+| Main application | Python, FastAPI, browser MediaRecorder and Web Audio APIs |
+| Earlier interface and reasoning demos | Streamlit |
+| Verification | pytest, synthetic dialogue fixtures |
 
-The VAD thresholds are intentionally defined at the top of
-`app/static/app.js` so the team can tune the silence delay and microphone
-sensitivity during venue testing. While a warning is synthesized and played,
-the current recording segment is discarded and capture resumes after a short
-echo-recovery delay.
+## The hackathon
 
-Mock recording returns the configured `MOCK_STT_TEXT`. The typed fallback is
-the fastest way to test negative and alternate examples.
+The team split the work across audio, reasoning, interface and integration, and rules, testing, and presentation. The main engineering challenges were connecting those components, keeping speaker roles consistent, controlling model latency and token use, and preventing spoken alerts from feeding back into microphone capture.
 
-Run tests:
+The [final presentation](docs/presentation/Themis-Final-Presentation.pdf) introduces the project and its workflow. The [build archive](docs/archive/README.md) preserves the original role plans and earlier slides. Codex and Cursor helped implement the team's plan and framework; ChatGPT image generation supported the presentation scenes.
 
-```bash
-pytest -q
-```
+## Explore the repository
 
-## Enable ElevenLabs
+| Location | Contents |
+| --- | --- |
+| [`app/`](app/) | Main FastAPI application, audio adapters, and browser interface |
+| [`steelhacks_reasoning/`](steelhacks_reasoning/) | Classification, conversation context, and evidence validation |
+| [`tests/`](tests/) | Automated tests and synthetic dialogue fixtures |
+| [`docs/presentation/`](docs/presentation/) | Final slides and PDF preview |
+| [`docs/development/`](docs/development/) | Local setup, integration contracts, and reasoning notes |
+| [`docs/archive/`](docs/archive/) | Original team plans, earlier presentation, and Git practice files |
+| [`examples/streamlit/`](examples/streamlit/) | Earlier Streamlit interface prototype |
+| [`demo_app.py`](demo_app.py) | Standalone Streamlit reasoning demonstration |
 
-Copy `.env.example` to `.env` and set:
+## Project status
 
-```dotenv
-AUDIO_PROVIDER_MODE=elevenlabs
-ELEVENLABS_API_KEY=your_key_here
-ELEVENLABS_VOICE_ID=your_voice_id_here
-```
+**The hackathon is complete.** This repository presents the prototype and preserves its source and project materials.
 
-Then start with `uvicorn app.main:app --reload --env-file .env`. The browser
-never receives either value. `voice=default` is an application alias mapped to
-the backend voice ID.
-
-## Connect the Nemotron representative's service
-
-### Direct NVIDIA API
-
-For the hosted NVIDIA Nemotron API, add these values to `.env`:
-
-```dotenv
-ANALYSIS_PROVIDER_MODE=nvidia
-NEMOTRON_API_URL=https://integrate.api.nvidia.com/v1
-NEMOTRON_API_KEY=your_private_nvidia_key
-NEMOTRON_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
-```
-
-The backend converts the session/turn contract into a chat-completions request,
-requires structured concern JSON, and then applies the same exact-evidence and
-session validation used for a team-hosted service.
-
-### Team-hosted contract adapter
-
-The remote service must implement the request and response in
-[`docs/integration-contract.md`](docs/integration-contract.md). Add these values
-to `.env`:
-
-```dotenv
-ANALYSIS_PROVIDER_MODE=remote
-NEMOTRON_API_URL=https://their-service.example/api/analyze
-NEMOTRON_API_KEY=optional_key_if_required
-```
-
-The backend rejects non-verbatim evidence, unknown turn references, mismatched
-speakers, duplicate concern IDs, or a mismatched session ID.
-
-## Inputs still needed from the team
-
-1. **ElevenLabs owner/account:** development API key and approved voice ID.
-2. **Nemotron representative:** reachable endpoint, authentication method,
-   final category taxonomy, and confirmation of the exact response schema.
-3. **Interface representative:** confirmation that the reference state machine,
-   manual role selector, and reset semantics will be carried into the final UI.
-4. **Product/legal reviewer:** approved warning copy, human-review language, and
-   rules for storing or deleting recordings and transcripts.
-
-## Demo script
-
-1. Start in mock mode and select **Officer**.
-2. Record one short turn. The mock transcript is:
-   `If you confess, I can make sure you go home tonight.`
-3. Confirm the exact quote, category, explanation, and one spoken/chime alert.
-4. Submit the same session again and confirm the concern does not replay.
-5. Reset the session and confirm old results do not reappear.
-6. Use typed fallback with `Where were you yesterday afternoon?` and confirm
-   **No concern detected** with no audio.
-7. Force an analysis endpoint failure in remote mode and confirm the interface
-   shows **Analysis unavailable**, not a negative result.
+Themis flags potential concerns for human review. It does not determine whether a legal violation occurred or replace legal advice. Transcription, speaker assignment, and analysis can be wrong. The demo uses simulated dialogue; its browser-local archives are a prototype feature, not a secure evidence-management system.
